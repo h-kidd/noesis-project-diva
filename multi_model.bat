@@ -9,7 +9,7 @@ set /p tex="Enter texture export file type: "
 set /a x=count-1
 
 for /l %%i in (0, 1, %x%) do (
-	Noesis.exe ?cmode %input% "%output%\model%%i.%model%" -modelindex %%i -texexsel -imgoutex .%tex%
+	Noesis.exe ?cmode %input% "%output%\model%%i.%model%" -modelindex %%i -texexsel -imgoutex .%tex% -noanims
 )
 
 pause

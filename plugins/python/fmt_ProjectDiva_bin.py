@@ -6,6 +6,8 @@ import noesis
 import rapi
 import os.path
 import math
+import ast
+from collections import MutableMapping as Map
 
 #Write vmd file (required for a3da)
 exportVmd = False
@@ -85,6 +87,10 @@ def registerNoesisTypes():
     #handle = noesis.register("Project Diva Expression Script", ".dex")
     #noesis.setHandlerTypeCheck(handle, expDexCheckType)
     #noesis.setHandlerLoadModel(handle, expLoadScript)
+
+    handle = noesis.register("Project Diva 3D Animation", ".a3da")
+    noesis.setHandlerTypeCheck(handle, a3daCheckType)
+    noesis.setHandlerLoadModel(handle, a3daLoadModel)
     return 1
 
 def objectSetCheckType(data):
@@ -100,7 +106,7 @@ def osdCheckType(data):
     bs = NoeBitStream(data)
     if len(data) < 4:
         return 0
-    magic =  bs.readBytes(4).decode("ASCII")
+    magic = bs.readBytes(4).decode("ASCII")
     if magic != "MOSD":
         return 0
     return 1
@@ -109,7 +115,7 @@ def osiCheckType(data):
     bs = NoeBitStream(data)
     if len(data) < 4:
         return 0
-    magic =  bs.readBytes(4).decode("ASCII")
+    magic = bs.readBytes(4).decode("ASCII")
     if magic != "MOSI":
         return 0
     return 1
@@ -149,7 +155,7 @@ def txdCheckType(data):
     bs = NoeBitStream(data)
     if len(data) < 4:
         return 0
-    magic =  bs.readBytes(4).decode("ASCII")
+    magic = bs.readBytes(4).decode("ASCII")
     if magic != "MTXD":
         return 0
     return 1
@@ -158,7 +164,7 @@ def txiCheckType(data):
     bs = NoeBitStream(data)
     if len(data) < 4:
         return 0
-    magic =  bs.readBytes(4).decode("ASCII")
+    magic = bs.readBytes(4).decode("ASCII")
     if magic != "MTXI":
         return 0
     return 1
@@ -199,7 +205,7 @@ def sprCheckType(data):
     bs = NoeBitStream(data)
     if len(data) < 4:
         return 0
-    magic =  bs.readBytes(4).decode("ASCII")
+    magic = bs.readBytes(4).decode("ASCII")
     if magic != "SPRC":
         return 0
     return 1
@@ -208,7 +214,7 @@ def spiCheckType(data):
     bs = NoeBitStream(data)
     if len(data) < 4:
         return 0
-    magic =  bs.readBytes(4).decode("ASCII")
+    magic = bs.readBytes(4).decode("ASCII")
     if magic != "SPDB":
         return 0
     return 1
@@ -217,7 +223,7 @@ def iblCheckType(data):
     bs = NoeBitStream(data)
     if len(data) < 7:
         return 0
-    magic =  bs.readBytes(7).decode("ASCII")
+    magic = bs.readBytes(7).decode("ASCII")
     if magic != "VF5_IBL":
         return 0
     return 1
@@ -226,7 +232,7 @@ def emcsCheckType(data):
     bs = NoeBitStream(data)
     if len(data) < 4:
         return 0
-    magic =  bs.readBytes(4).decode("ASCII")
+    magic = bs.readBytes(4).decode("ASCII")
     if magic != "EMCS":
         return 0
     return 1
@@ -243,7 +249,7 @@ def motCheckType(data):
     bs = NoeBitStream(data)
     if len(data) < 4:
         return 0
-    magic =  bs.readBytes(4).decode("ASCII")
+    magic = bs.readBytes(4).decode("ASCII")
     if magic != "MOTC":
         return 0
     return 1
@@ -261,18 +267,32 @@ def expDexCheckType(data):
     bs = NoeBitStream(data)
     if len(data) < 4:
         return 0
-    magic =  bs.readBytes(4).decode("ASCII")
+    magic = bs.readBytes(4).decode("ASCII")
     if magic != "EXPC":
         return 0
     return 1
 
-def objectSetLoadModel(data, mdlList):
+def a3daCheckType(data):
+    bs = NoeBitStream(data)
+    if len(data) < 4:
+        return 0
+    magic = bs.readBytes(4).decode("ASCII")
+    if magic != "#A3D" and magic != 'A3DA':
+        return 0
+    return 1
+
+def objectSetLoadModel(data, mdlList, fileName=None, fileDir=None, isMot=False):
     ctx = rapi.rpgCreateContext()
-    fileName = rapi.getExtensionlessName(rapi.getLocalFileName(rapi.getLastCheckedName()))[:-4]
-    fileDir = rapi.getDirForFilePath(rapi.getLastCheckedName())
+    if not fileName:
+        fileName = rapi.getExtensionlessName(rapi.getLocalFileName(rapi.getLastCheckedName()))[:-4]
+        fileDir = rapi.getDirForFilePath(rapi.getLastCheckedName())
     texDbData = getFileData(fileDir, "tex_db.bin")
     texDb = TexDb(32)
     texDb.readTexDb(NoeBitStream(texDbData))
+    texDbMdataData = getFileDataMdata(fileDir, 'tex_db.bin')
+    texDbMdata = TexDb(32)
+    if texDbMdataData:
+        texDbMdata.readTexDb(NoeBitStream(texDbMdataData))
     txpData = getFileData(fileDir, fileName + "_tex.bin")
     test = txpCheckType(txpData)
     if test == 0:
@@ -290,7 +310,13 @@ def objectSetLoadModel(data, mdlList):
     objDbData = getFileData(fileDir, "obj_db.bin")
     objDb = ObjDb(32)
     objDb.readObjDb(NoeBitStream(objDbData), False)
-    obj = ObjectSet(mdlList, txp.texList, objDb.db[fileName.upper()], texDb, boneData, 32, None)
+    objDbMdataData = getFileDataMdata(fileDir, 'obj_db.bin')
+    if objDbMdataData:
+        objDbMdata = ObjDb(32)
+        objDbMdata.readObjDb(NoeBitStream(objDbMdataData), False)
+        if fileName.upper() in objDbMdata.db:
+            objDb = objDbMdata
+    obj = ObjectSet(mdlList, txp.texList, objDb.db[fileName.upper()], texDb, boneData, 32, None, texDbMdata)
     obj.readObjSet(NoeBitStream(data), data)
     if fileName.startswith("stg") and "pv" in fileName and "hrc" not in fileName and (len(fileName) == 11 or len(fileName) == 13):
         txp2Data = getFileData(fileDir, fileName[:-3] + "_tex.bin")
@@ -305,16 +331,19 @@ def objectSetLoadModel(data, mdlList):
         if test == 0:
             noesis.messagePrompt("Invalid object file.")
             return 0
-        texObj = ObjectSet([], txp2.texList, objDb.db[fileName.upper()], texDb, boneData, 32, None)
+        texObj = ObjectSet([], txp2.texList, objDb.db[fileName.upper()], texDb, texDbMdata, boneData, 32, None, texDbMdata)
         texObj.readObjSet(NoeBitStream(texObjData), texObjData)
         for i in range(len(mdlList[0].modelMats.texList)):
             mdlList[0].modelMats.texList[i] = texObj.texList[texObj.texDict[mdlList[0].modelMats.texList[i].name]]
+    if isMot:
+        return obj
     return 1
 
-def osdLoadModel(data, mdlList):
+def osdLoadModel(data, mdlList, fileName=None, fileDir=None, isMot=False):
     ctx = rapi.rpgCreateContext()
-    fileName = rapi.getExtensionlessName(rapi.getLocalFileName(rapi.getLastCheckedName()))
-    fileDir = rapi.getDirForFilePath(rapi.getLastCheckedName())
+    if not fileName:
+        fileName = rapi.getExtensionlessName(rapi.getLocalFileName(rapi.getLastCheckedName()))
+        fileDir = rapi.getDirForFilePath(rapi.getLastCheckedName())
     txiData = getFileData(fileDir, fileName + ".txi")
     test = txiCheckType(txiData)
     if test == 0:
@@ -374,6 +403,8 @@ def osdLoadModel(data, mdlList):
         txd2 = Txd([])
         txd2.readTxd(NoeBitStream(txd2Data), fileName, txi2.texDb)
         mdlList[0].modelMats.texList = txd2.texList
+    if isMot:
+        return osd
     return 1
 
 def objectSetSrLoadModel(data, mdlList):
@@ -440,10 +471,16 @@ def txpFgoLoadRGBA(data, texList):
 def spriteLoadRGBA(data, texList):
     fileName = rapi.getExtensionlessName(rapi.getLocalFileName(rapi.getLastCheckedName()))
     fileDir = rapi.getDirForFilePath(rapi.getLastCheckedName())
-    sprDbData = getFileData(fileDir, "spr_db.bin")
+    sprDbData = getFileData(fileDir, 'spr_db.bin')
     sprDb = SprDb(32)
     sprDb.readSprDb(NoeBitStream(sprDbData))
-    spr = Sprite(texList, fileName + ".bin", sprDb, 32)
+    sprDbMdataData = getFileDataMdata(fileDir, 'spr_db.bin')
+    if sprDbMdataData:
+        sprDbMdata = SprDb(32)
+        sprDbMdata.readSprDb(NoeBitStream(sprDbMdataData))
+        if fileName + '.bin' in sprDbMdata.db:
+            sprDb = sprDbMdata
+    spr = Sprite(texList, fileName + '.bin', sprDb.db, 32)
     spr.readSpr(NoeBitStream(data), data, None)
     return 1
 
@@ -458,7 +495,7 @@ def sprLoadRGBA(data, texList):
     spi = Spi()
     spi.readSpi(NoeBitStream(spiData))
     spr = Spr(texList)
-    spr.readSpr(data, fileName, spi.sprDb)
+    spr.readSpr(data, fileName, spi.sprDb.db)
     return 1
 
 def iblLoadRGBA(data, texList):
@@ -486,29 +523,7 @@ def motBinLoadModel(data, mdlList):
         if test == 0:
             noesis.messagePrompt("Invalid model file.")
             return 0
-        texDbData = getFileData(fileDir, "tex_db.bin")
-        texDb = TexDb(32)
-        texDb.readTexDb(NoeBitStream(texDbData))
-        txpData = getFileData(fileDir, fileName + "_tex.bin")
-        test = txpCheckType(txpData)
-        if test == 0:
-            noesis.messagePrompt("Invalid texture file.")
-            return 0
-        txp = Txp([], None, False)
-        txp.readTxp(NoeBitStream(txpData), fileName)
-        boneDataData = getFileData(fileDir, "bone_data.bin")
-        boneData = BoneData(32)
-        if fileName[:3].upper() != "CMN":
-            skel = fileName[:3].upper()
-        else:
-            skel = None
-        boneData.readBoneData(NoeBitStream(boneDataData), skel)
-        objDbData = getFileData(fileDir, "obj_db.bin")
-        objDb = ObjDb(32)
-        objDb.readObjDb(NoeBitStream(objDbData), False)
-        obj = ObjectSet(mdlList, txp.texList, objDb.db[fileName.upper()], texDb, boneData, 32, None)
-        obj.isMot = True
-        obj.readObjSet(NoeBitStream(objData), objData)
+        obj = objectSetLoadModel(objData, mdlList, fileName, fileDir, True)
     else:
         noesis.messagePrompt("Invalid input.")
         return 0
@@ -517,7 +532,13 @@ def motBinLoadModel(data, mdlList):
     motDbData = getFileData(fileDir, "mot_db.bin")
     motDb = MotDb()
     motDb.readDb(NoeBitStream(motDbData))
-    mot = Motion(motDb, boneData, obj.boneList[0], obj.boneDict[0])
+    motDbMdataData = getFileDataMdata(fileDir, 'mot_db.bin')
+    if motDbMdataData:
+        motDbMdata = MotDb()
+        motDbMdata.readDb(NoeBitStream(motDbMdataData))
+        if fileName in motDbMdata.db:
+            motDb = motDbMdata
+    mot = Motion(motDb, obj.boneData, obj.boneList[0], obj.boneDict[0])
     mot.readMotion(NoeBitStream(data), fileName)
     mdlList[0].setAnims(mot.animList)
     rapi.setPreviewOption("setAnimSpeed", "60")
@@ -576,7 +597,7 @@ def motLoadModel(data, mdlList):
         osi = Osi()
         osi.readOsi(NoeBitStream(osiData))
         osd = Osd(mdlList, txd.texList)
-        osd.readOsd(osdData, osi.objDb.db[fileName.upper()], txi.texDb, bone.boneData, True)
+        osd.readOsd(osdData, osi.objDb.db[fileName.upper()], txi.texDb, bone.boneData)
     else:
         noesis.messagePrompt("Invalid input.")
         return 0
@@ -588,6 +609,15 @@ def motLoadModel(data, mdlList):
     rapi.setPreviewOption("setAnimSpeed", "60")
     if exportVmd:
         vmdExport(mot.names, mot.frameCounts, mot.animList, None, "diva.bone", "diva.morph")
+    return 1
+
+def a3daLoadModel(data, mdlList):
+    ctx = rapi.rpgCreateContext()
+    a3da = A3da(mdlList)
+    a3da.readA3da(data)
+    rapi.setPreviewOption("setAnimSpeed", "60")
+    if exportVmd:
+        vmdExport(a3da.names, a3da.frameCounts, a3da.animList, None, "diva.bone", "diva.morph")
     return 1
 
 def dscLoadScript(data, mdlList):
@@ -1002,11 +1032,12 @@ class Bone:
 
 class ObjectSet:
     
-    def __init__(self, mdlList, texList, objDb, texDb, boneData, addressSpace, sectionOff):
+    def __init__(self, mdlList, texList, objDb, texDb, boneData, addressSpace, sectionOff, texDbMdata={}):
         self.mdlList = mdlList
         self.texList = texList
         self.objDb = objDb
         self.texDb = texDb
+        self.texDbMdata = texDbMdata
         self.boneData = boneData
         self.texDict = {}
         self.texHashDict = {}
@@ -1016,10 +1047,11 @@ class ObjectSet:
         self.addressSpace = addressSpace
         self.sectionOff = sectionOff
         self.objId = []
+        self.objects = {}
         self.skinBoneName = []
         self.clsWeight = []
         self.clsBoneName = []
-        self.isMot = False
+        # self.isMot = False
         
     def readObjSet(self, bs, data):
         magic = bs.readUInt()
@@ -1048,7 +1080,10 @@ class ObjectSet:
         for i in range(texIdCount):
             texId = bs.readUInt()
             try:
-                self.texList[i].name = self.texDb.db[texId]
+                if texId in self.texDb.db:
+                    self.texList[i].name = self.texDb.db[texId]
+                else:
+                    self.texList[i].name = self.texDbMdata.db[texId]
                 self.texDict[self.texList[i].name] = i
                 self.texHashDict[texId] = self.texList[i].name
             except:
@@ -1114,15 +1149,15 @@ class ObjectSet:
                 self.loadParent(i, self.skinBoneName[i], skinBoneParent[i])
                 if clsNode[i]:
                     self.loadClsBone(i, clsNode[i])
-        if not self.isMot:
-            for i in range(objCount):
-                if skinBoneMtx[i]:
-                    for a in range(len(self.boneList[i])):
-                        if self.boneList[i][a].name not in boneFixList or self.boneList[i][a].name in self.skinBoneName[i]:
-                            br = self.boneList[i][a]._matrix.inverse()
-                            self.boneList[i][a]._matrix[0] = br[0]
-                            self.boneList[i][a]._matrix[1] = br[1]
-                            self.boneList[i][a]._matrix[2] = br[2]
+        # if not self.isMot:
+        #     for i in range(objCount):
+        #         if skinBoneMtx[i]:
+        #             for a in range(len(self.boneList[i])):
+        #                 if self.boneList[i][a].name not in boneFixList or self.boneList[i][a].name in self.skinBoneName[i]:
+        #                     br = self.boneList[i][a]._matrix.inverse()
+        #                     self.boneList[i][a]._matrix[0] = br[0]
+        #                     self.boneList[i][a]._matrix[1] = br[1]
+        #                     self.boneList[i][a]._matrix[2] = br[2]
 
     def readObject(self, bs, data, objCount):
         if objCount == 0:
@@ -1134,6 +1169,7 @@ class ObjectSet:
             for i in range(objCount):
                 try:
                     print(self.objDb[self.objId[i]])
+                    self.objects[self.objDb[self.objId[i]]] = i
                 except:
                     print("Unused object")
                 if self.endian == 1:
@@ -1160,6 +1196,7 @@ class ObjectSet:
             for i in range(objCount):
                 try:
                     print(self.objDb[self.objId[i]])
+                    self.objects[self.objDb[self.objId[i]]] = i
                 except:
                     print("Unused object")
                 objectOff = bs.readUInt()
@@ -1343,9 +1380,10 @@ class Osd:
         self.boneList =[]
         self.boneDict = []
         self.objId = []
+        self.objects = {}
         self.sectionOff = {"OMDL":[], "OSKN":[], "OIDX":[], "OVTX":[]}
 
-    def readOsd(self, data, objDb, texDb, boneData, isMot = False):
+    def readOsd(self, data, objDb, texDb, boneData):
         bs = NoeBitStream(data)
         magic = bs.readBytes(4).decode("ASCII")
         fileSize = bs.readUInt()
@@ -1357,8 +1395,6 @@ class Osd:
         self.getSectionOff(bs, fileSize)
         addressSpace = getAddressSpace(bs, fileSize, dataOff, dataSize)
         objectSet = ObjectSet(self.mdlList, self.texList, objDb, texDb, boneData, addressSpace, self.sectionOff)
-        if isMot:
-            objectSet.isMot = True
         if addressSpace == 32:
             bs.seek(dataOff, NOESEEK_ABS)
             if endian == 0x18000000:
@@ -1377,6 +1413,7 @@ class Osd:
             objectSet.readObjSet(ts, data[dataOff:])
         self.boneList = objectSet.boneList
         self.boneDict = objectSet.boneDict
+        self.objects = objectSet.objects
 
     def getSectionOff(self, bs, fileSize):
         start = 0
@@ -2175,11 +2212,11 @@ class ObjectSetSr:
                 mdl = NoeModel()
             if obj.boneList != []:
                 obj.boneList = rapi.multiplyBones(obj.boneList)
-                for a in range(len(obj.boneList)):
-                    br = obj.boneList[a]._matrix.inverse()
-                    obj.boneList[a]._matrix[0] = br[0]
-                    obj.boneList[a]._matrix[1] = br[1]
-                    obj.boneList[a]._matrix[2] = br[2]
+                # for a in range(len(obj.boneList)):
+                #     br = obj.boneList[a]._matrix.inverse()
+                #     obj.boneList[a]._matrix[0] = br[0]
+                #     obj.boneList[a]._matrix[1] = br[1]
+                #     obj.boneList[a]._matrix[2] = br[2]
                 mdl.setBones(obj.boneList)
             if i == 0:
                 mdl.setModelMaterials(NoeModelMaterials(texList, obj.matList))
@@ -2392,11 +2429,11 @@ class ObjectSetFgo:
                 mdl = NoeModel()
             if obj.boneList != []:
                 obj.boneList = rapi.multiplyBones(obj.boneList)
-                for a in range(len(obj.boneList)):
-                    br = obj.boneList[a]._matrix.inverse()
-                    obj.boneList[a]._matrix[0] = br[0]
-                    obj.boneList[a]._matrix[1] = br[1]
-                    obj.boneList[a]._matrix[2] = br[2]
+                # for a in range(len(obj.boneList)):
+                #     br = obj.boneList[a]._matrix.inverse()
+                #     obj.boneList[a]._matrix[0] = br[0]
+                #     obj.boneList[a]._matrix[1] = br[1]
+                #     obj.boneList[a]._matrix[2] = br[2]
                 mdl.setBones(obj.boneList)
             if i == 0:
                 mdl.setModelMaterials(NoeModelMaterials(texList, obj.matList))
@@ -2983,7 +3020,7 @@ class Sprite:
         bs.seek(spriteOff, NOESEEK_ABS)
         for i in range(spriteCount):
             tex = self.readSprInfo(bs, txp.texInfo, txp.texRGBAData)
-            tex.name = self.sprDb.db[self.fileName][i]
+            tex.name = self.sprDb[self.fileName][i]
             self.texList.append(tex)
 
     def readSprInfo(self, bs, texInfo, texRGBAData):
@@ -3445,33 +3482,33 @@ class Motion:
         if boneName in self.boneData.type:
             if self.boneData.type[boneName] & 0x02:
                 if self.boneData.type[boneName] & 0x04:
-                    keys = self.loadRotKeys(frameCount, xKeyFrames, yKeyFrames, zKeyFrames, boneName, 2)
+                    keys = self.loadRotKeys(frameCount, xKeyFrames, yKeyFrames, zKeyFrames, boneName, 1)
                     boneKey.setRotation(keys, noesis.NOEKF_ROTATION_QUATERNION_4, noesis.NOEKF_INTERPOLATE_LINEAR)
                 else:
-                    keys = self.loadKeys(frameCount, xKeyFrames, yKeyFrames, zKeyFrames, 2)
+                    keys = self.loadKeys(frameCount, xKeyFrames, yKeyFrames, zKeyFrames, 1)
                     boneKey.setTranslation(keys, noesis.NOEKF_TRANSLATION_VECTOR_3, noesis.NOEKF_INTERPOLATE_LINEAR)
             else:
                 if boneName == "cl_kao":
-                    keys = self.loadRotKeys(frameCount, xKeyFrames, zKeyFrames, yKeyFrames, boneName, 2)
+                    keys = self.loadRotKeys(frameCount, xKeyFrames, zKeyFrames, yKeyFrames, boneName, 1)
                 else:
-                    keys = self.loadRotKeys(frameCount, xKeyFrames, yKeyFrames, zKeyFrames, boneName, 2)
+                    keys = self.loadRotKeys(frameCount, xKeyFrames, yKeyFrames, zKeyFrames, boneName, 1)
                 boneKey.setRotation(keys, noesis.NOEKF_ROTATION_QUATERNION_4, noesis.NOEKF_INTERPOLATE_LINEAR)
         elif boneName.endswith("_cp") or boneName == "gblctr":
-            keys = self.loadKeys(frameCount, xKeyFrames, yKeyFrames, zKeyFrames, 2)
+            keys = self.loadKeys(frameCount, xKeyFrames, yKeyFrames, zKeyFrames, 1)
             boneKey.setTranslation(keys, noesis.NOEKF_TRANSLATION_VECTOR_3, noesis.NOEKF_INTERPOLATE_LINEAR)
         else:
-            keys = self.loadRotKeys(frameCount, xKeyFrames, yKeyFrames, zKeyFrames, boneName, 2)
+            keys = self.loadRotKeys(frameCount, xKeyFrames, yKeyFrames, zKeyFrames, boneName, 1)
             boneKey.setRotation(keys, noesis.NOEKF_ROTATION_QUATERNION_4, noesis.NOEKF_INTERPOLATE_LINEAR)
         return boneKey
 
     def buildAnimMotMgf(self, frameCount, boneName, xTranKeyFrames, yTranKeyFrames, zTranKeyFrames, xRotKeyFrames, yRotKeyFrames, zRotKeyFrames, xSclKeyFrames = None, ySclKeyFrames = None, zSclKeyFrames = None):
         boneKey = NoeKeyFramedBone(self.boneDict[boneName])
-        keys = self.loadKeys(frameCount,  xTranKeyFrames, yTranKeyFrames, zTranKeyFrames, 0)
+        keys = self.loadKeys(frameCount,  xTranKeyFrames, yTranKeyFrames, zTranKeyFrames, 4)
         boneKey.setTranslation(keys, noesis.NOEKF_TRANSLATION_VECTOR_3, noesis.NOEKF_INTERPOLATE_LINEAR)
-        keys = self.loadRotKeys(frameCount, xRotKeyFrames, yRotKeyFrames, zRotKeyFrames, boneName, 0)
+        keys = self.loadRotKeys(frameCount, xRotKeyFrames, yRotKeyFrames, zRotKeyFrames, boneName, 4)
         boneKey.setRotation(keys, noesis.NOEKF_ROTATION_QUATERNION_4, noesis.NOEKF_INTERPOLATE_LINEAR)
         if self.boneData.type[boneName] == 0x00:
-            keys = self.loadKeys(frameCount, xSclKeyFrames, ySclKeyFrames, zSclKeyFrames, 0)
+            keys = self.loadKeys(frameCount, xSclKeyFrames, ySclKeyFrames, zSclKeyFrames, 4)
             boneKey.setScale(keys, noesis.NOEKF_SCALE_VECTOR_3, noesis.NOEKF_INTERPOLATE_LINEAR)
         return boneKey
 
@@ -3547,7 +3584,11 @@ class KeyFrames:
         self.keyType = keyType
         self.keys = []
         self.tangents = []
+        self.tangents2 = []
         self.frameList = []
+        self.interpType = 0
+        self.epTypePre = 0
+        self.epTypePost = 0
 
 class Dsc: 
     
@@ -3710,7 +3751,7 @@ class Dsc:
                 blend = 1.0
         if performer > len(self.performers) - 1:
             return
-        animId = robtbl.db[self.performers[performer]][self.mouth[idx]]
+        animId = robTbl.db[self.performers[performer]][self.mouth[idx]]
         if animId == -1:
             name = "NULL"
         else:
@@ -3742,7 +3783,7 @@ class Dsc:
                 blend = 1.0
         if performer > len(self.performers) - 1:
             return
-        animId = robtbl.db[self.performers[performer]][self.hand[idx]]
+        animId = robTbl.db[self.performers[performer]][self.hand[idx]]
         if animId == -1:
             name = "NULL"
         else:
@@ -3775,7 +3816,7 @@ class Dsc:
                 blend = 1.0
         if performer > len(self.performers) - 1:
             return
-        animId = robtbl.db[self.performers[performer]][self.look[idx]]
+        animId = robTbl.db[self.performers[performer]][self.look[idx]]
         if animId == -1:
             name = "NULL"
         else:
@@ -3805,7 +3846,7 @@ class Dsc:
                 blend = 1.0
         if performer > len(self.performers) - 1:
             return
-        animId = robtbl.db[self.performers[performer]][self.exp[idx]]
+        animId = robTbl.db[self.performers[performer]][self.exp[idx]]
         if animId == -1:
             name = "NULL"
         else:
@@ -4039,7 +4080,7 @@ class Exp:
         close = False
         for expKey in expAnims:
             if expKey.type == 0x00:
-                animId = robtbl.db[self.performers[performer]][self.exp[expKey.idx]]
+                animId = robTbl.db[self.performers[performer]][self.exp[expKey.idx]]
                 if animId == -1:
                     name = "NULL"
                 else:
@@ -4114,46 +4155,358 @@ class Morph:
         self.name = name
         self.blend = blend
 
-# class Vmd:
+class A3da:
 
-#     def __init__(self, name, animList, morphList):
-#         self.name = name
-#         self.animList = animList
-#         self.morphList = morphList
+    def __init__(self, mdlList):
+        self.mdlList = mdlList
+        self.animList = []
+        self.names = []
+        self.frameCounts = []
 
-#     def wrtieVmd(self, outDir):
-#         writeName = outDir + self.name + ".vmd"
-#         f = open(writeName, 'wb')
-#         f.write("Vocaloid Motion Data 0002".encode('shift_jis').ljust(30, b'\0'))#magic
-#         f.write(self.name.encode('shift_jis').ljust(20, b'\0')[:20])#model name
-#         self.writeAnim(f)
-#         self.writeMorph(f)
-#         f.write(struct.pack('4i',0,0,0,0))
-#         f.close()
-#         print("Successfully wrote " + self.name + ".vmd")
+    def readA3da(self, data):
+        bs = NoeBitStream(data)
+        magic = bs.readBytes(4).decode("ASCII")
+        if magic == 'A3DA':
+            fileSize = bs.readUInt()
+            dataOff = bs.readUInt()
+            endian = bs.readUInt()
+            unk = bs.readUInt()
+            dataSize = bs.readUInt()
+            bs.seek(dataOff, NOESEEK_ABS)
+            data2 = bs.readBytes(dataSize)
+            bs = NoeBitStream(data2)
+        bs.seek(0x00, NOESEEK_ABS)
+        magic = bs.readBytes(5).decode("ASCII")
+        if magic == '#A3DA':
+            a3daDict = self.loadA3daDict(data, {})
+            self.readA3daDict(a3daDict)
+        elif magic == '#A3DC':
+            a3daDict, a3daBs = self.loadA3dcDict(bs)
+            self.readA3daDict(a3daDict, a3daBs)
 
-#     def writeAnim(self, f):
-#         f.write(struct.pack('i', len(self.animList)))
+    def loadA3daDict(self, data, a3daDict):
+        lines = data.decode('utf-8').splitlines()
+        for line in lines:
+            if not line.startswith('#'):
+                sline = line.split('=')
+                dsline = sline[0].split('.')
+                newDict = current = {}
+                for itm in dsline:
+                    if itm == dsline[-1]:
+                        try:
+                            current[itm] = ast.literal_eval(sline[1])
+                        except:
+                            current[itm] = sline[1]
+                    else:
+                        current[itm] = {}
+                    current = current[itm]
+                nested_update(a3daDict, newDict)
+        return a3daDict
 
-#     def writeMorph(self, f):
-#         morphDict = self.readMorphDict()
-#         f.write(struct.pack('i', len(self.morphList)))
-#         for morph in self.morphList:
-#             if morph.name in morphDict:
-#                 f.write(morphDict[morph.name].encode('shift_jis').ljust(15, b'\0')[:15])
-#             else:
-#                 f.write(morph.name.encode('shift_jis').ljust(15, b'\0')[:15])
-#             f.write(struct.pack('i', morph.frame))
-#             f.write(struct.pack('f', morph.blend))
+    def loadA3dcDict(self, bs):
+        a3daDict = {}
+        bs.seek(0x18, NOESEEK_ABS)
+        bs.setEndian(NOE_BIGENDIAN)
+        headerOff = bs.readUInt()
+        count = bs.readShort()
+        stride = bs.readUShort()
+        bs.setEndian(NOE_LITTLEENDIAN)
+        bs.seek(headerOff, NOESEEK_ABS)
+        subType = bs.readUInt()
+        bs.setEndian(NOE_BIGENDIAN)
+        stringOff = bs.readUInt()
+        stringSize = bs.readUInt()
+        bs.setEndian(NOE_LITTLEENDIAN)
+        bs.seek(headerOff + stride, NOESEEK_ABS)
+        subType = bs.readUInt()
+        bs.setEndian(NOE_BIGENDIAN)
+        binaryOff = bs.readUInt()
+        binarySize = bs.readUInt()
+        bs.setEndian(NOE_LITTLEENDIAN)
+        bs.seek(stringOff, NOESEEK_ABS)
+        stringData = bs.readBytes(stringSize)
+        a3daDict = self.loadA3daDict(stringData, {})
+        bs.seek(binaryOff, NOESEEK_ABS)
+        a3daBs = NoeBitStream(bs.readBytes(binarySize))
+        return a3daDict, a3daBs
+        
+    def readA3daDict(self, a3daDict, bs=None):
+        compress = 0
+        if 'compress_f16' in a3daDict['_']:
+            compress = a3daDict['_']['compress_f16']
+        begin = a3daDict['play_control']['begin']
+        fps = a3daDict['play_control']['fps']
+        size = a3daDict['play_control']['size']
 
-#     def readMorphDict(self):
-#         d = {}
-#         with io.open(os.getcwd() + "/dicts/diva.morph", mode="r", encoding="utf-8") as f:
-#             for line in f:
-#                 if not line.startswith("#"):
-#                     (key, val) = line.split()
-#                     d[key] = val
-#         return d
+        if 'objhrc' in a3daDict:
+            objMdlList = []
+            modelPath = noesis.userPrompt(noesis.NOEUSERVAL_FILEPATH, "Open Model File", "Select a model file to open.", noesis.getSelectedFile(), None)
+            if isinstance(modelPath, str):
+                fileName = rapi.getExtensionlessName(rapi.getLocalFileName(modelPath))[:-4]
+                fileDir = rapi.getDirForFilePath(modelPath)
+                objData = rapi.loadIntoByteArray(modelPath)
+                testBin = objectSetCheckType(objData)
+                testOsd = osdCheckType(objData)
+                if testBin:
+                    fileName = rapi.getExtensionlessName(rapi.getLocalFileName(modelPath))[:-4]
+                    obj = objectSetLoadModel(objData, objMdlList, fileName, fileDir, True)
+                elif testOsd:
+                    fileName = rapi.getExtensionlessName(rapi.getLocalFileName(modelPath))
+                    obj = osdLoadModel(objData, objMdlList, fileName, fileDir, True)
+                else:
+                    noesis.messagePrompt("Invalid model file.")
+                    return 0
+            else:
+                noesis.messagePrompt("Invalid input.")
+                return 0
+            self.readObjhrc(a3daDict['objhrc'], bs, objMdlList, obj, size, compress)
+
+    def readObjhrc(self, a3daDict, bs, objMdlList, obj, size, compress):
+        for i in range(a3daDict['length']):
+            uidName = a3daDict[str(i)]['uid_name']
+            name = a3daDict[str(i)]['name']
+            objIdx = obj.objects[uidName]
+            mdl = objMdlList[objIdx]
+            anim, newBoneList = self.readNode(a3daDict[str(i)]['node'], bs, name, size, compress, obj.boneList[objIdx], obj.boneDict[objIdx])
+            mdl.setBones(newBoneList)
+            mdl.setAnims([anim])
+            self.mdlList.append(mdl)
+            self.animList.append(anim)
+            self.frameCounts.append(size)
+            self.names.append(name)
+
+    def readNode(self, a3daDict, bs, name, size, compress, boneList, boneDict):
+        kfBones = []
+        for i in range(a3daDict['length']):
+            if 'model_transform' in a3daDict[str(i)]:
+                binOff = a3daDict[str(i)]['model_transform']['bin_offset']
+                self.readModelTransform(a3daDict[str(i)], bs, compress, binOff)
+            boneName = a3daDict[str(i)]['name']
+            xTranKeyFrames, yTranKeyFrames, zTranKeyFrames = self.readKeysXYZ(a3daDict[str(i)]['trans'])
+            tranKeys = self.loadKeysXYZ(size, xTranKeyFrames, yTranKeyFrames, zTranKeyFrames)
+            xRotKeyFrames, yRotKeyFrames, zRotKeyFrames = self.readKeysXYZ(a3daDict[str(i)]['rot'])
+            rotKeys = self.loadRotKeysXYZ(size, xRotKeyFrames, yRotKeyFrames, zRotKeyFrames)
+            xSclKeyFrames, ySclKeyFrames, zSclKeyFrames = self.readKeysXYZ(a3daDict[str(i)]['scale'])
+            sclKeys = self.loadKeysXYZ(size, xSclKeyFrames, ySclKeyFrames, zSclKeyFrames)
+            visKeyFrames = self.readKeyData(a3daDict[str(i)]['visibility'])
+            visKeys = self.loadKeys(size, visKeyFrames)
+            if boneName not in boneDict:
+                idx = len(boneList)
+                boneDict[boneName] = idx
+                parentIdx = a3daDict[str(i)]['parent']
+                if parentIdx == -1:
+                    parent = -1
+                    mtx = NoeMat43()
+                else:
+                    parent = boneDict[a3daDict[str(parentIdx)]['name']]
+                    mtx = copy.deepcopy(boneList[parent]._matrix)
+                    # if boneName == 'n_stick_y':
+                    #     mtx = copy.deepcopy(boneList[parent]._matrix)
+                    #     mtx2 = copy.deepcopy(boneList[boneDict['j_stick_wj']]._matrix)
+                    #     mtx[3] = mtx2[3]
+                    if not boneName.startswith('j_') and visKeyFrames.keyType == 0x00:
+                        if xTranKeyFrames.keyType <= 0x01 and yTranKeyFrames.keyType <= 0x01 and zTranKeyFrames.keyType <= 0x01:
+                            if xRotKeyFrames.keyType <= 0x01 and yRotKeyFrames.keyType <= 0x01 and zRotKeyFrames.keyType <= 0x01:
+                                mtx2 = NoeAngles([xRotKeyFrames.keys[0]*noesis.g_flRadToDeg, yRotKeyFrames.keys[0]*noesis.g_flRadToDeg, zRotKeyFrames.keys[0]*noesis.g_flRadToDeg]).toMat43_XYZ()
+                                mtx2[3] = NoeVec3((xTranKeyFrames.keys[0], yTranKeyFrames.keys[0], zTranKeyFrames.keys[0]))
+                                tmpList = [NoeBone(0, 'tmp1', mtx, None, -1), NoeBone(1, 'tmp2', mtx2, None, 0)]
+                                tmpList = rapi.multiplyBones(tmpList)
+                                mtx = tmpList[1]._matrix
+                boneList.append(NoeBone(idx, boneName, mtx, None, parent))
+            else:
+                parentIdx = a3daDict[str(i)]['parent']
+                if parentIdx == -1:
+                    parent = -1
+                else:
+                    parent = boneDict[a3daDict[str(parentIdx)]['name']]
+                boneList[boneDict[boneName]].parentIndex = parent
+            boneKey = NoeKeyFramedBone(boneDict[boneName])
+            boneKey.setTranslation(tranKeys, noesis.NOEKF_TRANSLATION_VECTOR_3, noesis.NOEKF_INTERPOLATE_LINEAR)
+            boneKey.setRotation(rotKeys, noesis.NOEKF_ROTATION_QUATERNION_4, noesis.NOEKF_INTERPOLATE_LINEAR)
+            boneKey.setScale(sclKeys, noesis.NOEKF_SCALE_VECTOR_3, noesis.NOEKF_INTERPOLATE_LINEAR)
+            kfBones.append(boneKey)
+        return NoeKeyFramedAnim(name, boneList, kfBones, 1.0), boneList
+
+    def readModelTransform(self, a3daDict, bs, compress, binOff):
+        bs.seek(binOff, NOESEEK_ABS)
+        offsets = []
+        for i in range(10):
+            offsets.append(bs.readUInt())
+        a3daDict['scale'] = {'x': self.readBinKey(bs, compress, offsets[0])}
+        a3daDict['scale']['y'] = self.readBinKey(bs, compress, offsets[1])
+        a3daDict['scale']['z'] = self.readBinKey(bs, compress, offsets[2])
+        a3daDict['rot'] = {'x': self.readBinKey(bs, compress, offsets[3], True)}
+        a3daDict['rot']['y'] = self.readBinKey(bs, compress, offsets[4], True)
+        a3daDict['rot']['z'] = self.readBinKey(bs, compress, offsets[5], True)
+        a3daDict['trans'] = {'x': self.readBinKey(bs, compress, offsets[6])}
+        a3daDict['trans']['y'] = self.readBinKey(bs, compress, offsets[7])
+        a3daDict['trans']['z'] = self.readBinKey(bs, compress, offsets[8])
+        a3daDict['visibility'] = self.readBinKey(bs, compress, offsets[9])
+
+    def readBinKey(self, bs, compress, off, isRot=False):
+        mtDict = {}
+        if off == 0xFFFFFFFF:
+            mtDict['type'] = 1
+            mtDict['value'] = 1
+            return mtDict
+        bs.seek(off, NOESEEK_ABS)
+        keyType = bs.readByte()
+        mtDict['type'] = keyType
+        if keyType == 0x00:
+            return mtDict
+        elif keyType == 0x01:
+            bs.seek(0x03, NOESEEK_REL)
+            mtDict['value'] = bs.readFloat()
+            return mtDict
+        else:
+            epType = bs.readByte()
+            if epType:
+                epTypePre = epType & 0x0F
+                if epTypePre:
+                    mtDict['ep_type_pre'] = epTypePre
+                epTypePost = (epType & 0xF0) >> 4
+                if epTypePost:
+                    mtDict['ep_type_post'] = epTypePost
+            bs.seek(0x06, NOESEEK_REL)
+            mtDict['max'] = int(bs.readFloat())
+            keyLength = bs.readUInt()
+            mtDict['key'] = {'length': keyLength}
+            if isRot and compress == 1:
+                for i in range(keyLength):
+                    mtDict['key'][str(i)] = {'type': 3}
+                    frame = bs.readUShort()
+                    value = bs.readHalfFloat()
+                    tan1 = bs.readFloat()
+                    tan2 = bs.readFloat()
+                    mtDict['key'][str(i)]['data'] = (frame, value, tan1, tan2)
+            elif isRot and compress == 2:
+                for i in range(keyLength):
+                    mtDict['key'][str(i)] = {'type': 3}
+                    frame = bs.readUShort()
+                    value = bs.readHalfFloat()
+                    tan1 = bs.readHalfFloat()
+                    tan2 = bs.readHalfFloat()
+                    mtDict['key'][str(i)]['data'] = (frame, value, tan1, tan2)
+            else:
+                for i in range(keyLength):
+                    mtDict['key'][str(i)] = {'type': 3}
+                    frame = int(bs.readFloat())
+                    value = bs.readFloat()
+                    tan1 = bs.readFloat()
+                    tan2 = bs.readFloat()
+                    mtDict['key'][str(i)]['data'] = (frame, value, tan1, tan2)
+        return mtDict
+
+    def readKeysXYZ(self, a3daDict):
+        xKeyFrames = self.readKeyData(a3daDict['x'])
+        yKeyFrames = self.readKeyData(a3daDict['y'])
+        zKeyFrames = self.readKeyData(a3daDict['z'])
+        return xKeyFrames, yKeyFrames, zKeyFrames
+
+    def readKeyData(self, a3daDict):
+        keyFrames = KeyFrames(a3daDict['type'])
+        if 'ep_type_pre' in a3daDict:
+            keyFrames.epTypePre == a3daDict['ep_type_pre']
+        if 'ep_type_post' in a3daDict:
+            keyFrames.epTypePost == a3daDict['ep_type_post']
+        if keyFrames.keyType == 0x00:
+            keyFrames.frameList.append(0)
+            keyFrames.keys.append(0.0)
+        elif keyFrames.keyType == 0x01:
+            keyFrames.frameList.append(0)
+            keyFrames.keys.append(a3daDict['value'])
+        elif keyFrames.keyType == 0x02 or keyFrames.keyType == 0x04:
+            keyFrames.interpType = keyFrames.keyType
+            if 'raw_data' in a3daDict:
+                rawKeys = a3daDict["raw_data"]["value_list"]
+                for i in range(0, a3daDict["raw_data"]["value_list_size"], 2):
+                    keyFrames.frameList.append(rawKeys[i])
+                    keyFrames.keys.append(rawKeys[i+1])
+            else:
+                for i in range(a3daDict['key']['length']):
+                    subType = a3daDict['key'][str(i)]['type']
+                    if subType == 0x00:
+                        keyFrames.frameList.append(a3daDict['key'][str(i)]['data'])
+                        keyFrames.keys.append(0.0)
+                    else:
+                        key = a3daDict['key'][str(i)]['data']
+                        keyFrames.frameList.append(key[0])
+                        keyFrames.keys.append(key[1])
+        elif keyFrames.keyType == 0x03:
+            keyFrames.interpType = keyFrames.keyType
+            if 'raw_data' in a3daDict:
+                subType = a3daDict['raw_data_key_type']
+                rawKeys = a3daDict["raw_data"]["value_list"]
+                if subType == 0x02:
+                    for i in range(0, a3daDict["raw_data"]["value_list_size"], 3):
+                        keyFrames.frameList.append(rawKeys[i])
+                        keyFrames.keys.append(rawKeys[i+1])
+                        keyFrames.tangents.append(rawKeys[i+2])
+                        keyFrames.tangents2.append(rawKeys[i+2])
+                elif subType == 0x03:
+                    for i in range(0, a3daDict["raw_data"]["value_list_size"], 4):
+                        keyFrames.frameList.append(rawKeys[i])
+                        keyFrames.keys.append(rawKeys[i+1])
+                        keyFrames.tangents.append(rawKeys[i+2])
+                        keyFrames.tangents2.append(rawKeys[i+3])
+            else:
+                for i in range(a3daDict['key']['length']):
+                    subType = a3daDict['key'][str(i)]['type']
+                    if subType == 0x00:
+                        keyFrames.frameList.append(a3daDict['key'][str(i)]['data'])
+                        keyFrames.keys.append(0.0)
+                        keyFrames.tangents.append(0.0)
+                        keyFrames.tangents2.append(0.0)
+                    elif subType == 0x01:
+                        key = a3daDict['key'][str(i)]['data']
+                        keyFrames.frameList.append(key[0])
+                        keyFrames.keys.append(key[1])
+                        keyFrames.tangents.append(0.0)
+                        keyFrames.tangents2.append(0.0)
+                    elif subType == 0x02:
+                        key = a3daDict['key'][str(i)]['data']
+                        keyFrames.frameList.append(key[0])
+                        keyFrames.keys.append(key[1])
+                        keyFrames.tangents.append(key[2])
+                        keyFrames.tangents2.append(key[2])
+                    elif subType == 0x03:
+                        key = a3daDict['key'][str(i)]['data']
+                        keyFrames.frameList.append(key[0])
+                        keyFrames.keys.append(key[1])
+                        keyFrames.tangents.append(key[2])
+                        keyFrames.tangents2.append(key[3])
+        return keyFrames
+
+    def loadKeys(self, frameCount, keyFrames):
+        keys = []
+        if keyFrames.keyType <= 0x01:
+            keys.append(NoeKeyFramedValue(0, [keyFrames.keys[0], 0.0, 0.0]))
+        else:
+            key = interpolate(frameCount, keyFrames, keyFrames.interpType)
+            keys = cleanupKeys(frameCount, key, [0.0]*frameCount, [0.0]*frameCount)
+        return keys
+
+    def loadKeysXYZ(self, frameCount, xKeyFrames, yKeyFrames, zKeyFrames):
+        keys = []
+        if xKeyFrames.keyType <= 0x01 and yKeyFrames.keyType <= 0x01 and zKeyFrames.keyType <= 0x01:
+            keys.append(NoeKeyFramedValue(0, [xKeyFrames.keys[0], yKeyFrames.keys[0], zKeyFrames.keys[0]]))
+        else:
+            xKey = interpolate(frameCount, xKeyFrames, xKeyFrames.interpType)
+            yKey = interpolate(frameCount, yKeyFrames, yKeyFrames.interpType)
+            zKey = interpolate(frameCount, zKeyFrames, zKeyFrames.interpType)
+            keys = cleanupKeys(frameCount, xKey, yKey, zKey)
+        return keys
+
+    def loadRotKeysXYZ(self, frameCount, xKeyFrames, yKeyFrames, zKeyFrames):
+        keys = []
+        if xKeyFrames.keyType <= 0x01 and yKeyFrames.keyType <= 0x01 and zKeyFrames.keyType <= 0x01:
+            keys.append(NoeKeyFramedValue(0, NoeAngles([xKeyFrames.keys[0]*noesis.g_flRadToDeg, yKeyFrames.keys[0]*noesis.g_flRadToDeg, zKeyFrames.keys[0]*noesis.g_flRadToDeg]).toMat43_XYZ().toQuat()))
+        else:
+            xKey = interpolate(frameCount, xKeyFrames, xKeyFrames.interpType)
+            yKey = interpolate(frameCount, yKeyFrames, yKeyFrames.interpType)
+            zKey = interpolate(frameCount, zKeyFrames, zKeyFrames.interpType)
+            keys = cleanupRotKeys(frameCount, xKey, yKey, zKey, NoeAngles())
+        return keys
 
 def vmdExport(nameList, frameCountList, animList, morphList, boneDictName, morphDictName):
     outDir = noesis.userPrompt(noesis.NOEUSERVAL_FOLDERPATH, "Choose a output directory.", "Choose a directory to output your vmd files.", rapi.getDirForFilePath(rapi.getLastCheckedName()), isFolder)
@@ -4201,6 +4554,23 @@ def getFileData(path, name):
         fileDir = parent1Dir + "/tex/" + name
     else:
         fileDir = noesis.userPrompt(noesis.NOEUSERVAL_FILEPATH, "Open " + name, "Unable to locate " + name, noesis.getSelectedFile(), None)
+    data = rapi.loadIntoByteArray(fileDir)
+    return data
+
+def getFileDataMdata(path, name):
+    parent1Dir = os.path.dirname(os.path.dirname(path))
+    parent2Dir = os.path.dirname(parent1Dir)
+    parent3Dir = os.path.dirname(parent2Dir)
+    if rapi.checkFileExists(path + "mdata_" + name):
+        fileDir = path + "mdata_" + name
+    elif rapi.checkFileExists(parent1Dir + "/mdata_" + name):
+        fileDir = parent1Dir + "/mdata_" + name
+    elif rapi.checkFileExists(parent2Dir + "/mdata_" + name):
+        fileDir = parent2Dir + "/mdata_" + name
+    elif rapi.checkFileExists(parent3Dir + "/mdata_" + name):
+        fileDir = parent3Dir + "/mdata_" + name
+    else:
+        return None
     data = rapi.loadIntoByteArray(fileDir)
     return data
 
@@ -4368,16 +4738,21 @@ def addMorphKey(frame, name, initFrameCount, frameCount, initBlend, blend):
 def interpolate(frameCount, keyFrames, interpType):
     keys = []
     idx = 0
+    if keyFrames.frameList[0] == -1:
+        keyFrames.frameList.pop(0)
+        keyFrames.keys.pop(0)
+        if keyFrames.tangents:
+            keyFrames.tangents.pop(0)
+        if keyFrames.tangents2:
+            keyFrames.tangents2.pop(0)
+    firstFrame = keyFrames.frameList[0]
+    lastFrame = keyFrames.frameList[-1]
+    frameDelta = lastFrame - firstFrame
+    keyDelta = keyFrames.keys[-1] - keyFrames.keys[0]
     if interpType == 0:
         for i in range(frameCount):
-            if keyFrames.frameList[idx] == i and idx != len(keyFrames.frameList) - 1 and keyFrames.frameList[idx + 1] == i:
-                keyFrames.frameList.pop(idx)
-                keyFrames.keys.pop(idx)
-                keyFrames.tangents.pop(idx)
-            keys.append(interpolateMgf(i, keyFrames, idx))
-            if keyFrames.frameList[idx] == i and idx != len(keyFrames.frameList) - 1:
-                idx += 1
-    elif interpType == 2:
+            keys.append(keyFrames.keys[0])
+    elif interpType == 1:
         for i in range(frameCount):
             if keyFrames.frameList[idx] == i and idx != len(keyFrames.frameList) - 1 and keyFrames.frameList[idx + 1] == i:
                 keyFrames.frameList.pop(idx)
@@ -4386,7 +4761,70 @@ def interpolate(frameCount, keyFrames, interpType):
             keys.append(interpolateMot(i, keyFrames, idx))
             if keyFrames.frameList[idx] == i and idx != len(keyFrames.frameList) - 1:
                 idx += 1
+    elif interpType == 2:
+        for i in range(frameCount):
+            if keyFrames.frameList[idx] == i and idx != len(keyFrames.frameList) - 1 and keyFrames.frameList[idx + 1] == i:
+                keyFrames.frameList.pop(idx)
+                keyFrames.keys.pop(idx)
+            keys.append(interpolateLinear(i, keyFrames, idx))
+            if keyFrames.frameList[idx] == i and idx != len(keyFrames.frameList) - 1:
+                idx += 1
+        if keyFrames.epTypePre >= 1 and keyFrames.epTypePre <= 3:
+            for i in range(0, frameCount):
+                keys[i] = inerpolateA3daEpPre(i, keyFrames.epTypePre, keys, firstFrame, lastFrame, frameDelta, keyDelta)
+        if keyFrames.epTypePost >= 1 and keyFrames.epTypePost <= 3:
+            for i in range(lastFrame + 1, frameCount):
+                keys[i] = inerpolateA3daEpPost(i, keyFrames.epTypePost, keys, firstFrame, lastFrame, frameDelta, keyDelta)
+    elif interpType == 3:
+        firstTan = keyFrames.tangents[0]
+        lastTan = keyFrames.tangents2[-1]
+        for i in range(frameCount):
+            if keyFrames.frameList[idx] == i and idx != len(keyFrames.frameList) - 1 and keyFrames.frameList[idx + 1] == i:
+                keyFrames.frameList.pop(idx)
+                keyFrames.keys.pop(idx)
+                keyFrames.tangents.pop(idx)
+                keyFrames.tangents2.pop(idx)
+            keys.append(interpolateA3da(i, keyFrames, idx))
+            if keyFrames.frameList[idx] == i and idx != len(keyFrames.frameList) - 1:
+                idx += 1
+        if keyFrames.epTypePre >= 1 and keyFrames.epTypePre <= 3:
+            for i in range(0, frameCount):
+                keys[i] = inerpolateA3daEpPre(i, keyFrames.epTypePre, keys, firstFrame, lastFrame, frameDelta, keyDelta, firstTan)
+        if keyFrames.epTypePost >= 1 and keyFrames.epTypePost <= 3:
+            for i in range(lastFrame + 1, frameCount):
+                keys[i] = inerpolateA3daEpPost(i, keyFrames.epTypePost, keys, firstFrame, lastFrame, frameDelta, keyDelta, lastTan)
+    elif interpType == 4:
+        for i in range(frameCount):
+            if keyFrames.frameList[idx] == i and idx != len(keyFrames.frameList) - 1 and keyFrames.frameList[idx + 1] == i:
+                keyFrames.frameList.pop(idx)
+                keyFrames.keys.pop(idx)
+            keys.append(interpolateHold(i, keyFrames, idx))
+            if keyFrames.frameList[idx] == i and idx != len(keyFrames.frameList) - 1:
+                idx += 1
+        if keyFrames.epTypePre >= 1 and keyFrames.epTypePre <= 3:
+            for i in range(0, frameCount):
+                keys[i] = inerpolateA3daEpPre(i, keyFrames.epTypePre, keys, firstFrame, lastFrame, frameDelta, keyDelta)
+        if keyFrames.epTypePost >= 1 and keyFrames.epTypePost <= 3:
+            for i in range(lastFrame + 1, frameCount):
+                keys[i] = inerpolateA3daEpPost(i, keyFrames.epTypePost, keys, firstFrame, lastFrame, frameDelta, keyDelta)
     return keys
+
+def interpolateLinear(frame, keyFrames, idx):
+    if frame <= keyFrames.frameList[0]:
+        return keyFrames.keys[0]
+    elif frame >= keyFrames.frameList[-1]:
+        return keyFrames.keys[-1]
+    cf = keyFrames.frameList[idx-1]
+    nf = keyFrames.frameList[idx]
+    cv = keyFrames.keys[idx-1]
+    nv = keyFrames.keys[idx]
+    if frame > cf and frame < nf:
+        t = (frame - cf) / (nf - cf)
+        return (1.0 - t) * cv + t * nv
+    elif frame <= cf:
+        return cv
+    else:
+        return nv
 
 def interpolateMot(frame, keyFrames, idx):
     if frame <= keyFrames.frameList[0]:
@@ -4409,7 +4847,28 @@ def interpolateMot(frame, keyFrames, idx):
     else:
         return nv
 
-def interpolateMgf(frame, keyFrames, idx):
+def interpolateA3da(frame, keyFrames, idx):
+    if frame <= keyFrames.frameList[0]:
+        return keyFrames.keys[0]
+    elif frame >= keyFrames.frameList[-1]:
+        return keyFrames.keys[-1]
+    cf = keyFrames.frameList[idx-1]
+    nf = keyFrames.frameList[idx]
+    cv = keyFrames.keys[idx-1]
+    nv = keyFrames.keys[idx]
+    ct = keyFrames.tangents2[idx-1]
+    nt = keyFrames.tangents[idx]
+    if frame > cf and frame < nf:
+        df = frame - cf
+        t = df / (nf - cf)
+        t_1 = t - 1.0
+        return cv + t * t * (3.0 - 2.0 * t) * (nv - cv) + (t_1 * ct + t * nt) * df * t_1
+    elif frame <= cf:
+        return cf
+    else:
+        return nv
+
+def interpolateHold(frame, keyFrames, idx):
     if frame <= keyFrames.frameList[0]:
         return keyFrames.keys[0]
     elif frame >= keyFrames.frameList[-1]:
@@ -4422,6 +4881,26 @@ def interpolateMgf(frame, keyFrames, idx):
         return cv
     else:
         return nv
+
+def inerpolateA3daEpPre(frame, epType, keys, firstFrame, lastFrame, frameDelta, keyDelta, tan=0.0):
+    ep = 0.0
+    df = firstFrame - frame
+    if epType == 1:
+        return firstFrame - df * tan
+    f = int(lastFrame - df % frameDelta)
+    if epType == 3:
+        ep = -float(int(df / frameDelta) + 1) * keyDelta
+    return keys[f] + ep
+
+def inerpolateA3daEpPost(frame, epType, keys, firstFrame, lastFrame, frameDelta, keyDelta, tan=0.0):
+    ep = 0.0
+    df = frame - lastFrame
+    if epType == 1:
+        return lastFrame + df * tan
+    f = int(firstFrame + df % frameDelta)
+    if epType == 3:
+        ep = float(int(df / frameDelta) + 1) * keyDelta
+    return keys[f] + ep
 
 def interpLinear(frame, initFrame, endFrame, initKey, endKey):
     t = (frame - initFrame) / (endFrame - initFrame)
@@ -4449,6 +4928,13 @@ def cleanupRotKeys(frameCount, xKey, yKey, zKey, fix):
             keys.append(NoeKeyFramedValue(i, (NoeAngles([xKey[i]*noesis.g_flRadToDeg, yKey[i]*noesis.g_flRadToDeg, zKey[i]*noesis.g_flRadToDeg]).toMat43_XYZ() * fix.toMat43()).toQuat()))
     keys.append(NoeKeyFramedValue(frameCount - 1, (NoeAngles([xKey[-1]*noesis.g_flRadToDeg, yKey[-1]*noesis.g_flRadToDeg, zKey[-1]*noesis.g_flRadToDeg]).toMat43_XYZ() * fix.toMat43()).toQuat()))
     return keys
+
+def nested_update(d, v):
+        for key in v:
+            if key in d and isinstance(d[key], Map) and isinstance(v[key], Map):
+                nested_update(d[key], v[key])
+            else:
+                d[key] = v[key]
 
 def initMotionBonesAFT():
     usedBones = ["n_hara_cp", "kg_hara_y", "kl_hara_xz", "kl_hara_etc", "e_mune_cp", "cl_mune", "kl_mune_b_wj", "kl_kubi", "e_kao_cp", "cl_kao", "kl_ago_wj", "tl_tooth_under_wj",
