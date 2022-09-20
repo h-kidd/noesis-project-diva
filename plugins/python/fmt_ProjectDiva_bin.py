@@ -7,6 +7,7 @@ import rapi
 import os.path
 import math
 import ast
+import copy
 from collections import MutableMapping as Map
 
 #Write vmd file (required for a3da)
