@@ -13,6 +13,9 @@ Animations:
 - Project Diva
 - Miracle Girls Festival
 
+Project Diva Auth 3D:
+- Objhrc (beta)
+
 To enable vmd export set `exportVmd` to `True` on line 11
 
 This would not be possible without the help of Chrrox, korenkonder, BlueSkyth, Brolijah, samyuu
