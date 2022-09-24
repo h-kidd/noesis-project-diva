@@ -332,7 +332,7 @@ def objectSetLoadModel(data, mdlList, fileName=None, fileDir=None, isMot=False):
         if test == 0:
             noesis.messagePrompt("Invalid object file.")
             return 0
-        texObj = ObjectSet([], txp2.texList, objDb.db[fileName.upper()], texDb, texDbMdata, boneData, 32, None, texDbMdata)
+        texObj = ObjectSet([], txp2.texList, objDb.db[fileName.upper()], texDb, boneData, 32, None, texDbMdata)
         texObj.readObjSet(NoeBitStream(texObjData), texObjData)
         for i in range(len(mdlList[0].modelMats.texList)):
             mdlList[0].modelMats.texList[i] = texObj.texList[texObj.texDict[mdlList[0].modelMats.texList[i].name]]
