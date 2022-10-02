@@ -317,7 +317,10 @@ def objectSetLoadModel(data, mdlList, fileName=None, fileDir=None, isMot=False):
         objDbMdata.readObjDb(NoeBitStream(objDbMdataData), False)
         if fileName.upper() in objDbMdata.db:
             objDb = objDbMdata
-    obj = ObjectSet(mdlList, txp.texList, objDb.db[fileName.upper()], texDb, boneData, 32, None, texDbMdata)
+    objectSetDb = {}
+    if fileName.upper() in objDb.db:
+        objectSetDb = objDb.db[fileName.upper()]
+    obj = ObjectSet(mdlList, txp.texList, objectSetDb, texDb, boneData, 32, None, texDbMdata)
     obj.readObjSet(NoeBitStream(data), data)
     if fileName.startswith("stg") and "pv" in fileName and "hrc" not in fileName and (len(fileName) == 11 or len(fileName) == 13):
         txp2Data = getFileData(fileDir, fileName[:-3] + "_tex.bin")
@@ -332,7 +335,7 @@ def objectSetLoadModel(data, mdlList, fileName=None, fileDir=None, isMot=False):
         if test == 0:
             noesis.messagePrompt("Invalid object file.")
             return 0
-        texObj = ObjectSet([], txp2.texList, objDb.db[fileName.upper()], texDb, boneData, 32, None, texDbMdata)
+        texObj = ObjectSet([], txp2.texList, objectSetDb, texDb, texDbMdata, boneData, 32, None, texDbMdata)
         texObj.readObjSet(NoeBitStream(texObjData), texObjData)
         for i in range(len(mdlList[0].modelMats.texList)):
             mdlList[0].modelMats.texList[i] = texObj.texList[texObj.texDict[mdlList[0].modelMats.texList[i].name]]
@@ -373,12 +376,6 @@ def osdLoadModel(data, mdlList, fileName=None, fileDir=None, isMot=False):
     else:
         bone = Bone()
         bone.boneData = BoneData(32)
-        bone.boneData.name.append("gblctr")
-        bone.boneData.mtx.append(NoeMat43())
-        bone.boneData.parent.append(-1)
-        bone.boneData.name.append("kg_ya_ex")
-        bone.boneData.mtx.append(NoeMat43())
-        bone.boneData.parent.append(0)
     osiData = getFileData(fileDir, fileName + ".osi")
     test = osiCheckType(osiData)
     if test == 0:
@@ -386,8 +383,8 @@ def osdLoadModel(data, mdlList, fileName=None, fileDir=None, isMot=False):
         return 0
     osi = Osi()
     osi.readOsi(NoeBitStream(osiData))
-    osd = Osd(mdlList, txd.texList)
-    osd.readOsd(data, osi.objDb.db[fileName.upper()], txi.texDb, bone.boneData)
+    osd = Osd(mdlList, txd.texList, bone.boneData)
+    osd.readOsd(data, osi.objDb.db[fileName.upper()], txi.texDb)
     if fileName.startswith("stg") and "pv" in fileName and "hrc" not in fileName and (len(fileName) == 11 or len(fileName) == 13):
         txi2Data = getFileData(fileDir, fileName[:-3] + ".txi")
         test = txiCheckType(txi2Data)
@@ -515,16 +512,22 @@ def emcsLoadRGBA(data, texList):
 
 def motBinLoadModel(data, mdlList):
     ctx = rapi.rpgCreateContext()
-    modelPath = noesis.userPrompt(noesis.NOEUSERVAL_FILEPATH, "Open Model File", "Select a bin model file to open.", noesis.getSelectedFile(), None)
+    modelPath = noesis.userPrompt(noesis.NOEUSERVAL_FILEPATH, "Open Model File", "Select a model file to open.", noesis.getSelectedFile(), None)
     if isinstance(modelPath, str):
         fileName = rapi.getExtensionlessName(rapi.getLocalFileName(modelPath))[:-4]
         fileDir = rapi.getDirForFilePath(modelPath)
         objData = rapi.loadIntoByteArray(modelPath)
-        test = objectSetCheckType(objData)
-        if test == 0:
+        testBin = objectSetCheckType(objData)
+        testOsd = osdCheckType(objData)
+        if testBin:
+            fileName = rapi.getExtensionlessName(rapi.getLocalFileName(modelPath))[:-4]
+            obj = objectSetLoadModel(objData, mdlList, fileName, fileDir, True)
+        elif testOsd:
+            fileName = rapi.getExtensionlessName(rapi.getLocalFileName(modelPath))
+            obj = osdLoadModel(objData, mdlList, fileName, fileDir, True)
+        else:
             noesis.messagePrompt("Invalid model file.")
             return 0
-        obj = objectSetLoadModel(objData, mdlList, fileName, fileDir, True)
     else:
         noesis.messagePrompt("Invalid input.")
         return 0
@@ -549,63 +552,29 @@ def motBinLoadModel(data, mdlList):
 
 def motLoadModel(data, mdlList):
     ctx = rapi.rpgCreateContext()
-    modelPath = noesis.userPrompt(noesis.NOEUSERVAL_FILEPATH, "Open Model File", "Select a osd model file to open.", noesis.getSelectedFile(), None)
+    modelPath = noesis.userPrompt(noesis.NOEUSERVAL_FILEPATH, "Open Model File", "Select a model file to open.", noesis.getSelectedFile(), None)
     if isinstance(modelPath, str):
-        fileName = rapi.getExtensionlessName(rapi.getLocalFileName(modelPath))
+        fileName = rapi.getExtensionlessName(rapi.getLocalFileName(modelPath))[:-4]
         fileDir = rapi.getDirForFilePath(modelPath)
-        osdData = rapi.loadIntoByteArray(modelPath)
-        txiData = getFileData(fileDir, fileName + ".txi")
-        test = txiCheckType(txiData)
-        if test == 0:
-            noesis.messagePrompt("Invalid txi file.")
-            return 0
-        txi = Txi()
-        txi.readTxi(NoeBitStream(txiData))
-        txdData = getFileData(fileDir, fileName + ".txd")
-        test = txdCheckType(txdData)
-        if test == 0:
-            noesis.messagePrompt("Invalid txd file.")
-            return 0
-        txd = Txd([])
-        txd.readTxd(NoeBitStream(txdData), fileName, txi.texDb)
-        boneData, boneDataDir = getBoneData(fileDir, "bone_data.bon", fileName[:3], fileName[-3:] + ".bon")
-        isMGF = False
-        if boneData != None:
-            bone = Bone()
-            boneDataName = rapi.getExtensionlessName(rapi.getLocalFileName(boneDataDir))
-            if boneDataName != "bone_data":
-                skel = boneDataName.upper()
-                isMGF = True
-            elif fileName[:3].upper() != "CMN":
-                skel = fileName[:3].upper()
-            else:
-                skel = None
-            bone.readBone(NoeBitStream(boneData), skel)
+        objData = rapi.loadIntoByteArray(modelPath)
+        testBin = objectSetCheckType(objData)
+        testOsd = osdCheckType(objData)
+        if testOsd:
+            fileName = rapi.getExtensionlessName(rapi.getLocalFileName(modelPath))
+            obj = osdLoadModel(objData, mdlList, fileName, fileDir, True)
+        elif testBin:
+            fileName = rapi.getExtensionlessName(rapi.getLocalFileName(modelPath))[:-4]
+            obj = objectSetLoadModel(objData, mdlList, fileName, fileDir, True)
         else:
-            bone = Bone()
-            bone.boneData = BoneData(32)
-            bone.boneData.name.append("gblctr")
-            bone.boneData.mtx.append(NoeMat43())
-            bone.boneData.parent.append(-1)
-            bone.boneData.name.append("kg_ya_ex")
-            bone.boneData.mtx.append(NoeMat43())
-            bone.boneData.parent.append(0)
-        osiData = getFileData(fileDir, fileName + ".osi")
-        test = osiCheckType(osiData)
-        if test == 0:
-            noesis.messagePrompt("Invalid osi file.")
+            noesis.messagePrompt("Invalid model file.")
             return 0
-        osi = Osi()
-        osi.readOsi(NoeBitStream(osiData))
-        osd = Osd(mdlList, txd.texList)
-        osd.readOsd(osdData, osi.objDb.db[fileName.upper()], txi.texDb, bone.boneData)
     else:
         noesis.messagePrompt("Invalid input.")
         return 0
     fileName = rapi.getExtensionlessName(rapi.getLocalFileName(rapi.getLastCheckedName()))
     fileDir = rapi.getDirForFilePath(rapi.getLastCheckedName())
     mot = Motc()
-    mot.readMotc(data, bone.boneData, osd.boneList[0], osd.boneDict[0], fileName, fileDir, isMGF)
+    mot.readMotc(data, obj.boneData, obj.boneList[0], obj.boneDict[0], fileName, fileDir)
     mdlList[0].setAnims(mot.animList)
     rapi.setPreviewOption("setAnimSpeed", "60")
     if exportVmd:
@@ -919,34 +888,33 @@ class RobTbl:
 class BoneData:
     
     def __init__(self, addressSpace):
+        self.game = 'AFT'
         self.type = {}
-        self.name = []
-        self.mtx = []
-        self.parent = []
+        self.boneList = []
+        self.boneDict = {}
         self.addressSpace = addressSpace
         
-    def readBoneData(self, bs, skel):
+    def readBoneData(self, bs, char):
         magic = bs.readUInt()
         skelCount = bs.readInt()
         skelOff = readOff(bs, self.addressSpace)
         skelNames = getOffStringList(bs, self.addressSpace, readOff(bs, self.addressSpace), skelCount)
-        boneMtx = NoeMat43()
-        self.name.append("gblctr")
-        self.mtx.append(NoeMat43())
-        self.parent.append(-1)
-        self.name.append("kg_ya_ex")
-        self.mtx.append(NoeMat43())
-        self.parent.append(0)
+        if 'TET' not in skelNames:
+            self.game = 'AC'
+            if 'RIN' not in skelNames:
+                self.game = 'VF5'
+                if 'AKI' not in skelNames:
+                    self.game = 'MGF'
         bs.seek(skelOff, NOESEEK_ABS)
         for i in range(skelCount):
             off = readOff(bs, self.addressSpace)
-            if skelNames[i] == skel:
+            if skelNames[i] == char:
                 pos = bs.tell()
                 bs.seek(off, NOESEEK_ABS)
-                self.readSkel(bs)
+                self.readSkel(bs, char)
                 bs.seek(pos, NOESEEK_ABS)
 
-    def readSkel(self, bs):
+    def readSkel(self, bs, char):
         boneOff = readOff(bs, self.addressSpace)
         boneVec3Count = bs.readInt()
         boneVec3Off = readOff(bs, self.addressSpace)
@@ -956,14 +924,16 @@ class BoneData:
         motBoneCount = bs.readInt()
         motBoneNames = getOffStringList(bs, self.addressSpace, readOff(bs, self.addressSpace), motBoneCount)
         parentOff = readOff(bs, self.addressSpace)
-        self.name.extend(motBoneNames)
         bs.seek(boneOff, NOESEEK_ABS)
         self.readBone(bs)
         bs.seek(boneVec3Off, NOESEEK_ABS)
         vec3 = self.readBoneVec3(bs, boneVec3Count)
         bs.seek(parentOff, NOESEEK_ABS)
-        self.parent.extend(self.readBoneParent(bs, motBoneCount))
-        self.loadSkel(vec3, objBoneNames, motBoneCount, motBoneNames)
+        parents = self.readBoneParent(bs, motBoneCount, motBoneNames)
+        if self.game == 'MGF':
+            self.loadSkelMgf(char, vec3, motBoneCount, motBoneNames, parents)
+        else:
+            self.loadSkel(char, vec3, motBoneCount, motBoneNames, parents)
 
     def readBone(self, bs):
         while True:
@@ -985,25 +955,116 @@ class BoneData:
             vec3.append([bs.readFloat(), bs.readFloat(), bs.readFloat()])
         return vec3
 
-    def readBoneParent(self, bs, motBoneCount):
-        parent = []
+    def readBoneParent(self, bs, motBoneCount, motBoneNames):
+        parents = []
         for i in range(motBoneCount):
-            pIdx = bs.readShort() + 2
-            if pIdx != 1 and self.name[pIdx].endswith("_cp") and self.name[pIdx] != "n_hara_cp":
-                parent.append(parent[pIdx - 2])
-            else:
-                parent.append(pIdx)
-        return parent
+            pIdx = bs.readShort()
+            if motBoneNames[pIdx].endswith('_cp') and motBoneNames[pIdx].startswith('e_'):
+                pIdx = parents[pIdx]
+            parents.append(pIdx)
+        return parents
 
-    def loadSkel(self, vec3, objBoneNames, motBoneCount, motBoneNames):
+    def loadSkel(self, char, vec3, motBoneCount, motBoneNames, parents):
+        if self.game == 'AFT':
+            boneTrans, boneRot = baseSkelAFT()
+        elif self.game == 'AC':
+            boneTrans, boneRot = baseSkelAC()
+        elif self.game == 'VF5':
+            boneTrans, boneRot = baseSkelVF5()
+        else:
+            return
+        boneTrans = boneTrans[char]
+        self.boneList.append(NoeBone(0, 'gblctr', NoeMat43(), None, -1))
+        self.boneDict['gblctr'] = 0
+        self.boneList.append(NoeBone(1, 'kg_ya_ex', NoeMat43(), None, 0))
+        self.boneDict['kg_ya_ex'] = 1
+        idx = 0
+        ikIdxDict = {}
         for i in range(motBoneCount):
-            if motBoneNames[i] in objBoneNames:
-                pos = NoeVec3(vec3[objBoneNames.index(motBoneNames[i]) + 2])
-            else:
-                pos = NoeVec3((0, 0, 0))
-            boneMtx = NoeMat43()
-            boneMtx[3] = pos
-            self.mtx.append(boneMtx)
+            boneName = motBoneNames[i]
+            parent = parents[i]
+            pos = NoeVec3((0, 0, 0))
+            if boneName in self.type:
+                pos = NoeVec3(vec3[idx])
+                if self.type[boneName] == 0x04:
+                    ikIdxDict[boneName] = idx
+                    idx += 1
+                elif self.type[boneName] == 0x05 or self.type[boneName] == 0x06:
+                    ikIdxDict[boneName] = idx
+                    idx += 2
+                idx += 1
+            mtx = NoeMat43()
+            mtx[3] = pos
+            if boneName in boneTrans:
+                mtx[3] = boneTrans[boneName]
+            elif boneName in boneRot and not boneName.startswith('c_kata'):
+                mtx2 = NoeAngles([boneRot[boneName][0]*noesis.g_flRadToDeg, boneRot[boneName][1]*noesis.g_flRadToDeg, boneRot[boneName][2]*noesis.g_flRadToDeg]).toMat43_XYZ()
+                mtx2[3] = mtx[3]
+                mtx = mtx2
+            elif boneName == 'e_mune_cp':
+                boneName2 = 'cl_mune'
+                mtx[3] = NoeVec3(vec3[ikIdxDict[boneName2]+1])
+            elif boneName == 'j_mune_wj' or boneName == 'j_kao_wj':
+                mtx2 = NoeAngles((0.0, 0.0, 90.0)).toMat43_XYZ()
+                mtx2[3] = mtx[3]
+                mtx = mtx2
+            elif boneName == 'e_kao_cp':
+                boneName2 = 'cl_kao'
+                mtx[3] = NoeVec3(vec3[ikIdxDict[boneName2]+1])
+            elif boneName == 'c_kata_l' or boneName == 'c_kata_r':
+                mtx2 = NoeAngles([boneRot[boneName][0]*noesis.g_flRadToDeg, boneRot[boneName][1]*noesis.g_flRadToDeg, boneRot[boneName][2]*noesis.g_flRadToDeg]).toMat43_XYZ()
+                mtx2[3] = mtx[3]
+                mtx = mtx2
+            elif boneName == 'j_kata_l_wj_cu' or boneName == 'j_kata_r_wj_cu':
+                boneName2 = 'n_skata_'+boneName[7]+'_wj_cd_ex'
+                if boneName2 in boneRot:
+                    mtx2 = NoeAngles([boneRot[boneName2][0]*noesis.g_flRadToDeg, boneRot[boneName2][1]*noesis.g_flRadToDeg, boneRot[boneName2][2]*noesis.g_flRadToDeg]).toMat43_XYZ()
+                    mtx2[3] = mtx[3]
+                    mtx = mtx2
+            elif boneName == 'j_ude_l_wj' or boneName == 'j_ude_r_wj':
+                boneName2 = 'c_kata_'+boneName[6]
+                mtx[3] = NoeVec3(vec3[ikIdxDict[boneName2]+1])
+            elif boneName == 'e_ude_l_cp' or boneName == 'e_ude_r_cp':
+                boneName2 = 'c_kata_'+boneName[6]
+                mtx[3] = NoeVec3(vec3[ikIdxDict[boneName2]+2])
+            elif boneName == 'j_momo_l_wj' or boneName == 'j_momo_r_wj':
+                mtx2 = NoeAngles((0.0, 0.0, -90.0)).toMat43_XYZ()
+                mtx2[3] = mtx[3]
+                mtx = mtx2
+            elif boneName == 'j_sune_l_wj' or boneName == 'j_sune_r_wj':
+                boneName2 = 'cl_momo_'+boneName[7]
+                mtx[3] = NoeVec3(vec3[ikIdxDict[boneName2]+1])
+            elif boneName == 'e_sune_l_cp' or boneName == 'e_sune_r_cp':
+                boneName2 = 'cl_momo_'+boneName[7]
+                mtx[3] = NoeVec3(vec3[ikIdxDict[boneName2]+2])
+            self.boneList.append(NoeBone(i+2, boneName, mtx, None, parent+2))
+            self.boneDict[boneName] = i+2
+
+    def loadSkelMgf(self, char, vec3, motBoneCount, motBoneNames, parents):
+        boneRot, boneRotExtra = baseSkelMGF()
+        boneRot = boneRot[char[:3]]
+        if char in boneRotExtra:
+            boneRot.update(boneRotExtra[char])
+        self.boneList.append(NoeBone(0, 'gblctr', NoeMat43(), None, -1))
+        self.boneDict['gblctr'] = 0
+        self.boneList.append(NoeBone(1, 'kg_ya_ex', NoeMat43(), None, 0))
+        self.boneDict['kg_ya_ex'] = 1
+        idx = 0
+        for i in range(motBoneCount):
+            boneName = motBoneNames[i]
+            parent = parents[i]
+            pos = NoeVec3((0, 0, 0))
+            if boneName in self.type:
+                pos = NoeVec3(vec3[idx])
+                idx += 1
+            mtx = NoeMat43()
+            mtx[3] = pos
+            if boneName in boneRot:
+                mtx2 = NoeAngles([boneRot[boneName][0]*noesis.g_flRadToDeg, boneRot[boneName][1]*noesis.g_flRadToDeg, boneRot[boneName][2]*noesis.g_flRadToDeg]).toMat43_XYZ()
+                mtx2[3] = mtx[3]
+                mtx = mtx2
+            self.boneList.append(NoeBone(i+2, boneName, mtx, None, parent+2))
+            self.boneDict[boneName] = i+2
 
 class Bone:
     
@@ -1093,31 +1154,30 @@ class ObjectSet:
                 self.texHashDict[texId] = self.texList[i].name
 
     def readSkin(self, bs, data, objCount):
-        skinBoneMtx = []
-        skinBoneParent = []
-        clsNode = []
-        boneFixList = ["n_hara_cp", "n_hara", "cl_mune", "j_mune_wj", "kl_kubi", "n_kao", "cl_kao", "face_root", "c_kata_l", "c_kata_r", "kl_te_l_wj", "kl_te_r_wj", "j_kata_l_wj_cu", "j_kata_r_wj_cu", "cl_momo_l", "cl_momo_r", "j_momo_l_wj", "j_momo_r_wj", "e_ude_l_cp", "e_ude_r_cp", "e_sune_l_cp", "e_sune_r_cp", "skirt_root", "lskirt_root"]
+        for i in range(objCount):
+            self.boneList.append(list(self.boneData.boneList))
+            self.boneDict.append(self.boneData.boneDict.copy())
         if self.sectionOff:
             for i in range(objCount):
                 if self.sectionOff["OSKN"][i]:
-                    skin = Skin(self.boneData, self.addressSpace)
+                    skin = Skin(self.boneList[i], self.boneDict[i], self.addressSpace)
                     if self.addressSpace == 32:
                         ts = NoeBitStream(data[self.sectionOff["OSKN"][i]:], self.endian)
                         ts.seek(0x20, NOESEEK_ABS)
-                        skin.readSkin(ts)
+                        skin.readSkin(ts, self.boneData.game)
                     elif self.addressSpace == 64:
-                        skin.readSkin(NoeBitStream(data[self.sectionOff["OSKN"][i]:], self.endian))
-                    skinBoneMtx.append(skin.boneMtx)
+                        skin.readSkin(NoeBitStream(data[self.sectionOff["OSKN"][i]:], self.endian), self.boneData.game)
                     self.skinBoneName.append(skin.boneName)
-                    skinBoneParent.append(skin.boneParent)
-                    clsNode.append(skin.clsNode)
                     self.clsWeight.append(skin.clsWeight)
                     self.clsBoneName.append(skin.clsBoneName)
+                    if skin.local:
+                        self.boneList[i] = list(rapi.multiplyBones(self.boneList[i]))
+                        self.resetBoneMtx(i)
+                        if skin.gblMtxs:
+                            for motName in skin.gblMtxs:
+                                self.boneList[i][self.boneDict[i][motName]]._matrix = skin.gblMtxs[motName]
                 else:
-                    skinBoneMtx.append([])
                     self.skinBoneName.append([])
-                    skinBoneParent.append([])
-                    clsNode.append([])
                     self.clsWeight.append({})
                     self.clsBoneName.append({})
         else:
@@ -1126,39 +1186,22 @@ class ObjectSet:
                 if skinOff != 0:
                     pos = bs.tell()
                     bs.seek(skinOff, NOESEEK_ABS)
-                    skin = Skin(self.boneData, self.addressSpace)
-                    skin.readSkin(bs)
+                    skin = Skin(self.boneList[i], self.boneDict[i], self.addressSpace)
+                    skin.readSkin(bs, self.boneData.game)
                     bs.seek(pos, NOESEEK_ABS)
-                    skinBoneMtx.append(skin.boneMtx)
                     self.skinBoneName.append(skin.boneName)
-                    skinBoneParent.append(skin.boneParent)
-                    clsNode.append(skin.clsNode)
                     self.clsWeight.append(skin.clsWeight)
                     self.clsBoneName.append(skin.clsBoneName)
+                    if skin.local:
+                        self.boneList[i] = list(rapi.multiplyBones(self.boneList[i]))
+                        self.resetBoneMtx(i)
+                        if skin.gblMtxs:
+                            for motName in skin.gblMtxs:
+                                self.boneList[i][self.boneDict[i][motName]]._matrix = skin.gblMtxs[motName]
                 else:
-                    skinBoneMtx.append([])
                     self.skinBoneName.append([])
-                    skinBoneParent.append([])
-                    clsNode.append([])
                     self.clsWeight.append({})
                     self.clsBoneName.append({})
-        for i in range(objCount):
-            self.boneList.append([])
-            self.boneDict.append({})
-            if skinBoneMtx[i]:
-                self.loadBone(boneFixList, i, skinBoneMtx[i], self.skinBoneName[i], skinBoneMtx)
-                self.loadParent(i, self.skinBoneName[i], skinBoneParent[i])
-                if clsNode[i]:
-                    self.loadClsBone(i, clsNode[i])
-        # if not self.isMot:
-        #     for i in range(objCount):
-        #         if skinBoneMtx[i]:
-        #             for a in range(len(self.boneList[i])):
-        #                 if self.boneList[i][a].name not in boneFixList or self.boneList[i][a].name in self.skinBoneName[i]:
-        #                     br = self.boneList[i][a]._matrix.inverse()
-        #                     self.boneList[i][a]._matrix[0] = br[0]
-        #                     self.boneList[i][a]._matrix[1] = br[1]
-        #                     self.boneList[i][a]._matrix[2] = br[2]
 
     def readObject(self, bs, data, objCount):
         if objCount == 0:
@@ -1215,176 +1258,34 @@ class ObjectSet:
                 self.mdlList.append(mdl)
                 rapi.rpgReset()
 
-    def loadBone(self, boneFixList, skinIdx, boneMtx, boneName, skinBoneMtx):
-        boneDataCount = len(self.boneData.name)
-        if boneDataCount != 2:
-            for i in range(boneDataCount):
-                name = self.boneData.name[i]
-                parent = self.boneData.parent[i]
-                if i == 0:
-                    newBone = NoeBone(i, name, self.boneData.mtx[i], None, parent)
-                    self.boneList[skinIdx].append(newBone)
-                    self.boneDict[skinIdx][newBone.name] = newBone.index
-                elif self.boneData.parent[i] == -1:
-                    if any(name in bn for bn in self.skinBoneName):
-                        idx = [(a, bn.index(name)) for a, bn in enumerate(self.skinBoneName) if name in bn]
-                        mtx = skinBoneMtx[idx[0][0]][idx[0][1]]
-                    elif name in boneFixList:
-                        mtx = self.mtxFix(skinIdx, name, self.boneData.mtx[i], parent, skinBoneMtx)
-                    else:
-                        mtx = self.boneData.mtx[i]
-                    newBone = NoeBone(i, name, mtx, None, 1)
-                    self.boneList[skinIdx].append(newBone)
-                    self.boneDict[skinIdx][newBone.name] = newBone.index
-                else:
-                    if any(name in bn for bn in self.skinBoneName):
-                        idx = [(a, bn.index(name)) for a, bn in enumerate(self.skinBoneName) if name in bn]
-                        mtx = skinBoneMtx[idx[0][0]][idx[0][1]]
-                    elif name in boneFixList:
-                        mtx = self.mtxFix(skinIdx, name, self.boneData.mtx[i], parent, skinBoneMtx)
-                    else:
-                        mtx = self.boneData.mtx[i] * self.boneList[skinIdx][parent]._matrix
-                    if name.endswith("_cp") and not name.startswith("tl_up_kata"):
-                        parent = 1
-                    elif name == "n_momo_l_cd_ex" or name == "n_momo_a_l_wj_cd_ex":
-                        parent = self.boneDict[skinIdx]["cl_momo_l"]
-                    elif name == "n_momo_r_cd_ex" or name == "n_momo_a_r_wj_cd_ex":
-                        parent = self.boneDict[skinIdx]["cl_momo_r"]
-                    newBone = NoeBone(i, name, mtx, None, parent)
-                    self.boneList[skinIdx].append(newBone)
-                    self.boneDict[skinIdx][newBone.name] = newBone.index
-            idxOff = boneDataCount
-            cnt = 0
-            for i in range(len(boneName)):
-                name = boneName[i]
-                if name not in self.boneDict[skinIdx]:
-                    newBone = NoeBone(cnt + idxOff, name, boneMtx[i], None, 1)
-                    self.boneList[skinIdx].append(newBone)
-                    self.boneDict[skinIdx][newBone.name] = newBone.index
-                    cnt += 1
-        else:
-            for i in range(boneDataCount):
-                name = self.boneData.name[i]
-                newBone = NoeBone(i, name, self.boneData.mtx[i], None, self.boneData.parent[i])
-                self.boneList[skinIdx].append(newBone)
-                self.boneDict[skinIdx][newBone.name] = newBone.index
-            idxOff = boneDataCount
-            for i in range(len(boneName)):
-                name = boneName[i]
-                newBone = NoeBone(i + idxOff, name, boneMtx[i], None, 1)
-                self.boneList[skinIdx].append(newBone)
-                self.boneDict[skinIdx][newBone.name] = newBone.index
-
-    def mtxFix(self, skinIdx, name, originalMtx, parent, skinBoneMtx):
-        mtx = NoeMat43()
-        if name == "n_hara_cp" and any("kl_kosi_etc_wj" in bn for bn in self.skinBoneName):
-            idx = [(a, bn.index("kl_kosi_etc_wj")) for a, bn in enumerate(self.skinBoneName) if "kl_kosi_etc_wj" in bn]
-            mtx[3] = skinBoneMtx[idx[0][0]][idx[0][1]][3]
-        elif name == "kl_kubi" and any("n_kubi_wj_ex" in bn for bn in self.skinBoneName):
-            idx = [(a, bn.index("n_kubi_wj_ex")) for a, bn in enumerate(self.skinBoneName) if "n_kubi_wj_ex" in bn]
-            mtx[3] = skinBoneMtx[idx[0][0]][idx[0][1]][3]
-        elif name == "kl_te_l_wj" and any("n_ste_l_wj_ex" in bn for bn in self.skinBoneName):
-            idx = [(a, bn.index("n_ste_l_wj_ex")) for a, bn in enumerate(self.skinBoneName) if "n_ste_l_wj_ex" in bn]
-            mtx = skinBoneMtx[idx[0][0]][idx[0][1]]
-        elif name == "kl_te_r_wj" and any("n_ste_r_wj_ex" in bn for bn in self.skinBoneName):
-            idx = [(a, bn.index("n_ste_r_wj_ex")) for a, bn in enumerate(self.skinBoneName) if "n_ste_r_wj_ex" in bn]
-            mtx = skinBoneMtx[idx[0][0]][idx[0][1]]
-        elif name == "cl_momo_l" and any("j_momo_l_wj" in bn for bn in self.skinBoneName):
-            idx = [(a, bn.index("j_momo_l_wj")) for a, bn in enumerate(self.skinBoneName) if "j_momo_l_wj" in bn]
-            mtx[3] = skinBoneMtx[idx[0][0]][idx[0][1]][3]
-        elif name == "cl_momo_l" and "n_momo_l_cd_ex" in self.boneData.name:
-            idx = self.boneData.name.index("n_momo_l_cd_ex")
-            mtx2 = self.boneData.mtx[idx] * self.boneList[skinIdx][parent]._matrix
-            mtx[3] = mtx2[3]
-        elif name == "cl_momo_l" and "n_momo_a_l_wj_cd_ex" in self.boneData.name:
-            idx = self.boneData.name.index("n_momo_a_l_wj_cd_ex")
-            mtx2 = self.boneData.mtx[idx] * self.boneList[skinIdx][parent]._matrix
-            mtx[3] = mtx2[3]
-        elif name == "cl_momo_r" and any("j_momo_r_wj" in bn for bn in self.skinBoneName):
-            idx = [(a, bn.index("j_momo_r_wj")) for a, bn in enumerate(self.skinBoneName) if "j_momo_r_wj" in bn]
-            mtx[3] = skinBoneMtx[idx[0][0]][idx[0][1]][3]
-        elif name == "cl_momo_r" and "n_momo_r_cd_ex" in self.boneData.name:
-            idx = self.boneData.name.index("n_momo_r_cd_ex")
-            mtx2 = self.boneData.mtx[idx] * self.boneList[skinIdx][parent]._matrix
-            mtx[3] = mtx2[3]
-        elif name == "cl_momo_r" and "n_momo_a_r_wj_cd_ex" in self.boneData.name:
-            idx = self.boneData.name.index("n_momo_a_r_wj_cd_ex")
-            mtx2 = self.boneData.mtx[idx] * self.boneList[skinIdx][parent]._matrix
-            mtx[3] = mtx2[3]
-        elif name == "e_ude_l_cp" and any("n_ste_l_wj_ex" in bn for bn in self.skinBoneName):
-            idx = [(a, bn.index("n_ste_l_wj_ex")) for a, bn in enumerate(self.skinBoneName) if "n_ste_l_wj_ex" in bn]
-            mtx[3] = skinBoneMtx[idx[0][0]][idx[0][1]][3]
-        elif name == "e_ude_r_cp" and any("n_ste_r_wj_ex" in bn for bn in self.skinBoneName):
-            idx = [(a, bn.index("n_ste_r_wj_ex")) for a, bn in enumerate(self.skinBoneName) if "n_ste_r_wj_ex" in bn]
-            mtx[3] = skinBoneMtx[idx[0][0]][idx[0][1]][3]
-        elif name == "e_sune_l_cp" and any("kl_asi_l_wj_co" in bn for bn in self.skinBoneName):
-            idx = [(a, bn.index("kl_asi_l_wj_co")) for a, bn in enumerate(self.skinBoneName) if "kl_asi_l_wj_co" in bn]
-            mtx[3] = skinBoneMtx[idx[0][0]][idx[0][1]][3]
-        elif name == "e_sune_l_cp" and "kl_asi_l_wj_co" in self.boneData.name:
-            idx = self.boneData.name.index("kl_asi_l_wj_co")
-            mtx2 = self.boneData.mtx[idx] * self.boneList[skinIdx][self.boneData.parent[idx]]._matrix
-            mtx[3] = mtx2[3]
-        elif name == "e_sune_r_cp" and any("kl_asi_r_wj_co" in bn for bn in self.skinBoneName):
-            idx = [(a, bn.index("kl_asi_r_wj_co")) for a, bn in enumerate(self.skinBoneName) if "kl_asi_r_wj_co" in bn]
-            mtx[3] = skinBoneMtx[idx[0][0]][idx[0][1]][3]
-        elif name == "e_sune_r_cp" and "kl_asi_r_wj_co" in self.boneData.name:
-            idx = self.boneData.name.index("kl_asi_r_wj_co")
-            mtx2 = self.boneData.mtx[idx] * self.boneList[skinIdx][self.boneData.parent[idx]]._matrix
-            mtx[3] = mtx2[3]
-        elif (name == "n_kao" or name == "cl_kao") and any("j_kao_wj" in bn for bn in self.skinBoneName):
-            idx = [(a, bn.index("j_kao_wj")) for a, bn in enumerate(self.skinBoneName) if "j_kao_wj" in bn]
-            mtx[3] = skinBoneMtx[idx[0][0]][idx[0][1]][3]
-        elif (name == "c_kata_l" or name == "j_kata_l_wj_cu") and any("n_skata_l_wj_cd_ex" in bn for bn in self.skinBoneName):
-            idx = [(a, bn.index("n_skata_l_wj_cd_ex")) for a, bn in enumerate(self.skinBoneName) if "n_skata_l_wj_cd_ex" in bn]
-            mtx = skinBoneMtx[idx[0][0]][idx[0][1]]
-        elif (name == "c_kata_r" or name == "j_kata_r_wj_cu") and any("n_skata_r_wj_cd_ex" in bn for bn in self.skinBoneName):
-            idx = [(a, bn.index("n_skata_r_wj_cd_ex")) for a, bn in enumerate(self.skinBoneName) if "n_skata_r_wj_cd_ex" in bn]
-            mtx = skinBoneMtx[idx[0][0]][idx[0][1]]
-        elif (name == "skirt_root" or name == "lskirt_root") and any("hips_wj" in bn for bn in self.skinBoneName):
-            idx = [(a, bn.index("hips_wj")) for a, bn in enumerate(self.skinBoneName) if "hips_wj" in bn]
-            mtx[3] = skinBoneMtx[idx[0][0]][idx[0][1]][3]
-        elif name == "face_root" or name == "cl_momo_l" or name == "cl_momo_r":
-            mtx[3] = self.boneList[skinIdx][parent]._matrix[3]
-        elif name == "n_hara" or name == "cl_mune" or name == "j_mune_wj" or name == "j_momo_l_wj" or name == "j_momo_r_wj":
-            mtx = self.boneList[skinIdx][parent]._matrix
-        else:
-            mtx = originalMtx * self.boneList[skinIdx][parent]._matrix
-        return mtx
-    
-    def loadParent(self, skinIdx, boneName, boneParent):
-        for i in range(len(boneName)):
-            if boneName[i] in boneParent and boneName[i] not in self.boneData.name:
-                name = boneName[i]
-                parent = boneParent[name]
-                if skinIdx == 0 and len(self.boneData.name) > 2:
-                    if parent == "e_sune_l_cp":
-                        parent = "kl_asi_l_wj_co"
-                    elif parent == "e_sune_r_cp":
-                        parent = "kl_asi_r_wj_co"
-                self.boneList[skinIdx][self.boneDict[skinIdx][name]].parentIndex = self.boneDict[skinIdx][parent]
-
-    def loadClsBone(self, skinIdx, clsNode):
-        for i in range(len(clsNode)):
-            mtx = NoeMat43()
-            mtx[3] = clsNode[i][1]
-            name = clsNode[i][0]
-            parent = clsNode[i][2]
-            newBone = NoeBone(len(self.boneList[skinIdx]), name, mtx, None, self.boneDict[skinIdx][parent])
-            self.boneList[skinIdx].append(newBone)
-            self.boneDict[skinIdx][newBone.name] = newBone.index
+    def resetBoneMtx(self, idx):
+        ikBones = {}
+        for bone in self.boneList[idx]:
+            if bone.name.startswith('e_') and bone.name.endswith('_cp'):
+                ikBones[bone.name] = {'name': bone.parentName, 'index': bone.parentIndex}
+                mtx2 = NoeMat43()
+                mtx2[3] = bone._matrix[3]
+                bone._matrix = mtx2
+                bone.parentName = 'kg_ya_ex'
+                bone.parentIndex = 1
+            elif bone.parentName in ikBones.keys():
+                parent = bone.parentName
+                bone.parentName = ikBones[parent]['name']
+                bone.parentIndex = ikBones[parent]['index']
 
 class Osd:
     
-    def __init__(self, mdlList, texList):
+    def __init__(self, mdlList, texList, boneData):
         self.mdlList = mdlList
         self.texList = texList
+        self.boneData = boneData
         self.boneList =[]
         self.boneDict = []
         self.objId = []
         self.objects = {}
         self.sectionOff = {"OMDL":[], "OSKN":[], "OIDX":[], "OVTX":[]}
 
-    def readOsd(self, data, objDb, texDb, boneData):
+    def readOsd(self, data, objDb, texDb):
         bs = NoeBitStream(data)
         magic = bs.readBytes(4).decode("ASCII")
         fileSize = bs.readUInt()
@@ -1395,7 +1296,7 @@ class Osd:
         bs.seek(dataOff + dataSize, NOESEEK_ABS)
         self.getSectionOff(bs, fileSize)
         addressSpace = getAddressSpace(bs, fileSize, dataOff, dataSize)
-        objectSet = ObjectSet(self.mdlList, self.texList, objDb, texDb, boneData, addressSpace, self.sectionOff)
+        objectSet = ObjectSet(self.mdlList, self.texList, objDb, texDb, self.boneData, addressSpace, self.sectionOff)
         if addressSpace == 32:
             bs.seek(dataOff, NOESEEK_ABS)
             if endian == 0x18000000:
@@ -1469,20 +1370,19 @@ class Osi:
 
 class Skin:
     
-    def __init__(self, boneData, addressSpace):
-        self.boneData = boneData
+    def __init__(self, boneList, boneDict, addressSpace):
+        self.boneList = boneList
+        self.boneDict = boneDict
         self.addressSpace = addressSpace
+        self.local = True
         self.boneMtx = []
-        self.boneName = []
         self.boneParent = {}
-        self.expNode = {}
-        self.osgNode = {}
-        self.cnsNode = {}
-        self.clsNode = []
+        self.gblMtxs = {}
         self.clsWeight = {}
         self.clsBoneName = {}
+        self.parentRetry = []
         
-    def readSkin(self, bs):
+    def readSkin(self, bs, game):
         boneIdOff = readOff(bs, self.addressSpace)
         boneMtxOff = readOff(bs, self.addressSpace)
         boneNameOff = readOff(bs, self.addressSpace)
@@ -1491,24 +1391,43 @@ class Skin:
         boneParentOff = readOff(bs, self.addressSpace)
         if boneCount:
             bs.seek(boneMtxOff, NOESEEK_ABS)
-            self.readBoneMtx(bs, boneCount)
+            boneMtxs = self.readBoneMtx(bs, boneCount)
             self.boneName = getOffStringList(bs, self.addressSpace, boneNameOff, boneCount)
             bs.seek(boneIdOff, NOESEEK_ABS)
             boneId = self.readBoneId(bs, boneCount)
+            boneParents = {}
             if boneParentOff:
                 bs.seek(boneParentOff, NOESEEK_ABS)
-                self.readBoneParent(bs, boneCount, boneId)
-            if exDataOff:
-                bs.seek(exDataOff, NOESEEK_ABS)
-                #try:
-                self.readExData(bs)
-                #except:
-                #	pass
+                boneParents = self.readBoneParent(bs, boneCount, boneId)
+            if game == 'MGF' and self.boneList:
+                self.local = False
+                for bone in self.boneList:
+                    if bone.name in self.boneName:
+                        bone._matrix = boneMtxs[self.boneName.index(bone.name)]
+                    elif bone.index > 1:
+                        mtx = copy.deepcopy(self.boneList[bone.parentIndex]._matrix)
+                        tmpList = [NoeBone(0, 'tmp1', mtx, None, -1), NoeBone(1, 'tmp2', bone._matrix, None, 0)]
+                        tmpList = rapi.multiplyBones(tmpList)
+                        bone._matrix = tmpList[1]._matrix
+            elif self.boneList:
+                if exDataOff:
+                    bs.seek(exDataOff, NOESEEK_ABS)
+                    self.readExData(bs)
+            else:
+                self.local = False
+                if boneParents:
+                    for i in range(boneCount):
+                        name = self.boneName[i]
+                        self.loadBone(name, None, None, None, None, boneMtxs[i], boneParents[name])
+                else:
+                    for i in range(boneCount):
+                        name = self.boneName[i]
+                        self.loadBone(name, None, None, None, None, boneMtxs[i])
 
     def readBoneId(self, bs, boneCount):
         boneId = {}
         for i in range(boneCount):
-            boneId[bs.readUInt()] = self.boneName[i]
+            boneId[bs.readUInt()] = i
         return boneId
 
     def readBoneMtx(self, bs, boneCount):
@@ -1520,13 +1439,17 @@ class Skin:
             m04, m14, m24, m34 = [bs.readFloat(), bs.readFloat(), bs.readFloat(), bs.readFloat()]
             boneMtx = NoeMat44([NoeVec4((m01, m02, m03, m04)), NoeVec4((m11, m12, m13, m14)), NoeVec4((m21, m22, m23, m24)), NoeVec4((m31, m32, m33, m34))]).inverse().toMat43()
             mtx.append(boneMtx)
-        self.boneMtx = mtx
+        return mtx
 
     def readBoneParent(self, bs, boneCount, boneId):
+        parent = {}
         for i in range(boneCount):
             parentId = bs.readUInt()
             if parentId != 0xFFFFFFFF:
-                self.boneParent[self.boneName[i]] = boneId[parentId]
+                parent[self.boneName[i]] = boneId[parentId]
+            else:
+                parent[self.boneName[i]] = -1
+        return parent
 
     def readExData(self, bs):
         osageNameCount = bs.readInt()
@@ -1544,10 +1467,11 @@ class Skin:
         bs.seek(osageSiblingOff, NOESEEK_ABS)
         osageSibling = self.readOsageSibling(bs, string)
         bs.seek(blockOff, NOESEEK_ABS)
-        try:
-            self.readBlock(bs, string)
-        except:
-            pass
+        self.readBlock(bs, string, osageNode)
+        for bone in self.parentRetry:
+            if bone[1] in self.boneDict:
+                parent = self.boneDict[bone[1]]
+                self.boneList[bone[0]].parentIndex = parent
 
     def readOsageNode(self, bs, osageNodeCount, string):
         osgNode = []
@@ -1570,7 +1494,7 @@ class Skin:
             osgSibling.append([boneName, siblingName, distance])
         return osgSibling
 
-    def readBlock(self, bs, string):
+    def readBlock(self, bs, string, osageNode):
         while True:
             sigOff = readOff(bs, self.addressSpace)
             if sigOff == 0:
@@ -1582,125 +1506,144 @@ class Skin:
             if signature == "EXP":
                 self.readExp(bs)
             elif signature == "OSG":
-                self.readOsg(bs, string)
+                self.readOsg(bs, string, osageNode)
             elif signature == "MOT":
                 self.readMot(bs, string)
             elif signature == "CNS":
-                self.readCns(bs, string)
+                try:
+                    self.readCns(bs)
+                except:
+                    pass
+            elif signature == "ITM":
+                self.readItm(bs)
             elif signature == "CLS":
-                self.readCls(bs, string)
+                self.readCls(bs)
             bs.seek(pos, NOESEEK_ABS)
 
     def readExp(self, bs):
         parentName = getOffString(bs, readOff(bs, self.addressSpace))
-        pos = [bs.readFloat(), bs.readFloat(), bs.readFloat()]
-        rot = [bs.readFloat(), bs.readFloat(), bs.readFloat()]
-        scl = [bs.readFloat(), bs.readFloat(), bs.readFloat()]
+        pos = NoeVec3((bs.readFloat(), bs.readFloat(), bs.readFloat()))
+        rot = NoeVec3((bs.readFloat(), bs.readFloat(), bs.readFloat()))
+        scl = NoeVec3((bs.readFloat(), bs.readFloat(), bs.readFloat()))
         name = getOffString(bs, readOff(bs, self.addressSpace))
         count = bs.readInt()
         exp = []
         for i in range(count):
             exp.append(getOffString(bs, readOff(bs, self.addressSpace)))
-        if parentName in self.boneName:
-            self.boneParent[name] = parentName
-            self.expNode[name] = parentName
-        elif parentName in self.expNode:
-            pName = self.expNode[parentName]
-            while True:
-                if pName in self.boneName or pName in self.boneData.name:
-                    break
-                pName = self.expNode[pName]
-            self.boneParent[name] = pName
-            self.expNode[name] = parentName
-        elif parentName in self.cnsNode:
-            self.boneParent[name] = self.cnsNode[parentName]
-            self.expNode[name] = self.cnsNode[parentName]
-        else:
-            self.boneParent[name] = parentName
-            self.expNode[name] = parentName
+        if name not in self.boneDict:
+            self.loadBone(name, parentName, pos, rot, scl)
 
-    def readOsg(self, bs, string):
+    def readOsg(self, bs, string, osageNode):
         parentName = getOffString(bs, readOff(bs, self.addressSpace))
-        pos = [bs.readFloat(), bs.readFloat(), bs.readFloat()]
-        rot = [bs.readFloat(), bs.readFloat(), bs.readFloat()]
-        scl = [bs.readFloat(), bs.readFloat(), bs.readFloat()]
+        pos = NoeVec3((bs.readFloat(), bs.readFloat(), bs.readFloat()))
+        rot = NoeVec3((bs.readFloat(), bs.readFloat(), bs.readFloat()))
+        scl = NoeVec3((bs.readFloat(), bs.readFloat(), bs.readFloat()))
         if self.addressSpace == 64:
             bs.seek(0x04, NOESEEK_REL)
         index = bs.readUInt()
         count = bs.readInt()
         externalNameIdx = bs.readUInt() & 0x7FFF
-        name = string[bs.readUInt() & 0x7FFF]
-        if parentName in self.boneName:
-            prevOsgName = parentName
-        elif parentName in self.expNode:
-            prevOsgName = self.expNode[parentName]
-            while True:
-                if prevOsgName in self.boneName or prevOsgName in self.boneData.name:
-                    break
-                prevOsgName = self.expNode[prevOsgName]
-        elif parentName in self.cnsNode:
-            prevOsgName = self.cnsNode[parentName]
-        else:
-            prevOsgName = parentName
-        for i in range(count):
-            osgName = string[externalNameIdx + i + 1]
-            if i == 0:
-                if prevOsgName in self.osgNode:
-                    self.boneParent[osgName] = self.osgNode[prevOsgName]
-                    prevOsgName = self.osgNode[prevOsgName]
-                else:
-                    self.boneParent[osgName] = prevOsgName
+        name = string[externalNameIdx]
+        endName = string[bs.readUInt() & 0x7FFF]
+        osgNodeOff = bs.readUInt()
+        self.loadBone(name, parentName, pos, rot, scl)
+        osgParent = name
+        osgPos = NoeVec3((0.0, 0.0, 0.0))
+        if osgNodeOff:
+            bs.seek(osgNodeOff, NOESEEK_ABS)
+            osgNodes = []
+            osgNameIdx = bs.readUInt()
+            if osgNameIdx:
+                bs.seek(-4, NOESEEK_REL)
             else:
-                self.boneParent[osgName] = prevOsgName
-            if osgName in self.boneName:
-                prevOsgName = osgName
-            self.osgNode[osgName] = prevOsgName
-        self.osgNode[name] = prevOsgName
+                for i in range(count):
+                    osgName = osageNode[index+i][0]
+                    if i:
+                        osgPos = NoeVec3((osageNode[index+i-1][1], 0.0, 0.0))
+                    if osgName in self.boneDict:
+                        osgName = osgName + '_osg'
+                    self.loadBone(osgName, osgParent, osgPos)
+                    osgParent = osgName
+                self.loadBone(endName, osgParent, NoeVec3((osageNode[index+count-1][1], 0.0, 0.0)))
+                return
+            for i in range(count):
+                osgName = string[bs.readUInt() & 0x7FFF]
+                length = bs.readFloat()
+                osgRot = NoeVec3((bs.readFloat(), bs.readFloat(), bs.readFloat()))
+                osgNodes.append([osgName, length, osgRot])
+            for i in range(count):
+                osgName = osgNodes[i][0]
+                if i:
+                    osgPos = NoeVec3((osgNodes[i-1][1], 0.0, 0.0))
+                if osgName in self.boneDict:
+                    osgName = osgName + '_osg'
+                self.loadBone(osgName, osgParent, osgPos, osgNodes[i][2])
+                osgParent = osgName
+            self.loadBone(endName, osgParent, NoeVec3((osgNodes[-1][1], 0.0, 0.0)))
+        else:
+            for i in range(count):
+                osgName = osageNode[index+i][0]
+                if i:
+                    osgPos = NoeVec3((osageNode[index+i-1][1], 0.0, 0.0))
+                if osgName in self.boneDict:
+                    osgName = osgName + '_osg'
+                self.loadBone(osgName, osgParent, osgPos)
+                osgParent = osgName
+            self.loadBone(endName, osgParent, NoeVec3((osageNode[index+count-1][1], 0.0, 0.0)))
 
     def readMot(self, bs, string):
         parentName = getOffString(bs, readOff(bs, self.addressSpace))
-        pos = [bs.readFloat(), bs.readFloat(), bs.readFloat()]
-        rot = [bs.readFloat(), bs.readFloat(), bs.readFloat()]
-        scl = [bs.readFloat(), bs.readFloat(), bs.readFloat()]
+        pos = NoeVec3((bs.readFloat(), bs.readFloat(), bs.readFloat()))
+        rot = NoeVec3((bs.readFloat(), bs.readFloat(), bs.readFloat()))
+        scl = NoeVec3((bs.readFloat(), bs.readFloat(), bs.readFloat()))
         name = getOffString(bs, readOff(bs, self.addressSpace))
         count = bs.readInt()
         boneNameOff = readOff(bs, self.addressSpace)
         boneMtxOff = readOff(bs, self.addressSpace)
         bs.seek(boneNameOff, NOESEEK_ABS)
-        prevMotName = parentName
+        boneNames = []
         for i in range(count):
-            motName = string[bs.readUInt() & 0x7FFF]
-            if i == 0:
-                if parentName in self.expNode:
-                    self.boneParent[motName] = self.expNode[prevMotName]
-                elif parentName in self.osgNode:
-                    self.boneParent[motName] = self.osgNode[prevMotName]
-                else:
-                    self.boneParent[motName] = prevMotName
-            else:
-                if "000" in motName:
-                    prevMotName = parentName
-                self.boneParent[motName] = prevMotName
-            prevMotName = motName
+            boneNames.append(string[bs.readUInt() & 0x7FFF])
+        bs.seek(boneMtxOff, NOESEEK_ABS)
+        boneMtxs = []
+        for i in range(count):
+            m01, m11, m21, m31 = [bs.readFloat(), bs.readFloat(), bs.readFloat(), bs.readFloat()]
+            m02, m12, m22, m32 = [bs.readFloat(), bs.readFloat(), bs.readFloat(), bs.readFloat()]
+            m03, m13, m23, m33 = [bs.readFloat(), bs.readFloat(), bs.readFloat(), bs.readFloat()]
+            m04, m14, m24, m34 = [bs.readFloat(), bs.readFloat(), bs.readFloat(), bs.readFloat()]
+            boneMtx = NoeMat44([NoeVec4((m01, m02, m03, m04)), NoeVec4((m11, m12, m13, m14)), NoeVec4((m21, m22, m23, m24)), NoeVec4((m31, m32, m33, m34))]).toMat43()
+            boneMtxs.append(boneMtx)
+        self.loadBone(name, parentName, pos, rot, scl)
+        motParent = name
+        for i in range(count):
+            boneName = boneNames[i]
+            if '000' in boneName:
+                motParent = name
+            self.gblMtxs[boneName] = boneMtxs[i]
+            self.loadBone(boneName, motParent, None, None, None, boneMtxs[i])
+            motParent = boneName
 
-    def readCns(self, bs, string):
+    def readCns(self, bs):
         parentName = getOffString(bs, readOff(bs, self.addressSpace))
-        pos = [bs.readFloat(), bs.readFloat(), bs.readFloat()]
-        rot = [bs.readFloat(), bs.readFloat(), bs.readFloat()]
-        scl = [bs.readFloat(), bs.readFloat(), bs.readFloat()]
+        pos = NoeVec3((bs.readFloat(), bs.readFloat(), bs.readFloat()))
+        rot = NoeVec3((bs.readFloat(), bs.readFloat(), bs.readFloat()))
+        scl = NoeVec3((bs.readFloat(), bs.readFloat(), bs.readFloat()))
         cnsType = getOffString(bs, readOff(bs, self.addressSpace))
         name = getOffString(bs, readOff(bs, self.addressSpace))
         coupling = bs.readInt()
         sourceName = getOffString(bs, readOff(bs, self.addressSpace))
-        if parentName in self.expNode:
-            parentName = self.expNode[parentName]
-            while True:
-                if parentName in self.boneName or parentName in self.boneData.name:
-                    break
-                parentName = self.expNode[parentName]
-        self.cnsNode[name] = parentName
+        self.loadBone(name, parentName, pos, rot, scl)
 
-    def readCls(self, bs, string):
+    def readItm(self, bs):
+        parentName = getOffString(bs, readOff(bs, self.addressSpace))
+        pos = NoeVec3((bs.readFloat(), bs.readFloat(), bs.readFloat()))
+        rot = NoeVec3((bs.readFloat(), bs.readFloat(), bs.readFloat()))
+        scl = NoeVec3((bs.readFloat(), bs.readFloat(), bs.readFloat()))
+        itmType = getOffString(bs, readOff(bs, self.addressSpace))
+        name = getOffString(bs, readOff(bs, self.addressSpace))
+        self.loadBone(name, parentName, pos, rot, scl)
+
+    def readCls(self, bs):
         meshName = getOffString(bs, readOff(bs, self.addressSpace))
         backfaceName = getOffString(bs, readOff(bs, self.addressSpace))
         unk1 = bs.readUInt()
@@ -1718,7 +1661,7 @@ class Skin:
         nodeName = []
         usedBone = []
         for i in range(rowCount):
-            pos = NoeVec3([bs.readFloat(), bs.readFloat(), bs.readFloat()])
+            pos = NoeVec3((bs.readFloat(), bs.readFloat(), bs.readFloat()))
             bs.seek(0x1C, NOESEEK_REL)
             bone1 = self.readClsNodeInfo(bs)
             bone2 = self.readClsNodeInfo(bs)
@@ -1726,9 +1669,10 @@ class Skin:
             bone4 = self.readClsNodeInfo(bs)
             rootBoneName.append([bone1[0], bone2[0], bone3[0], bone4[0]])
             rootWeight.append([bone1[1], bone2[1], bone3[1], bone4[1]])
-            name = meshName + "_" + str(i+1).zfill(2) + "_00"
-            self.clsNode.append([name, pos, bone1[0]])
+            name = meshName + "_" + str(i+1).zfill(2) + "_000"
+            mtx = self.loadBone(name, bone1[0], pos)
             nodeName.append(name)
+            self.gblMtxs[name] = mtx
             for a in range(4):
                 if rootBoneName[i][a] and rootBoneName[i][a] not in usedBone:
                     usedBone.append(rootBoneName[i][a])
@@ -1736,11 +1680,13 @@ class Skin:
         for i in range(columnCount-1):
             for a in range(rowCount):
                 nodeType = bs.readUInt()
-                pos = NoeVec3([bs.readFloat(), bs.readFloat(), bs.readFloat()])
+                pos = NoeVec3((bs.readFloat(), bs.readFloat(), bs.readFloat()))
                 bs.seek(0x1C, NOESEEK_REL)
-                name = meshName + "_" + str(a+1).zfill(2) + "_" + str(i+1).zfill(2)
-                self.clsNode.append([name, pos, meshName + "_" + str(a+1).zfill(2) + "_" + str(i).zfill(2)])
+                name = meshName + "_" + str(a+1).zfill(2) + "_" + str(i+1).zfill(3)
+                parent = meshName + "_" + str(a+1).zfill(2) + "_" + str(i).zfill(3)
+                mtx = self.loadBone(name, parent, pos)
                 nodeName.append(name)
+                self.gblMtxs[name] = mtx
         usedBoneDict = {}
         for i in range(len(usedBone)):
             usedBoneDict[usedBone[i]] = len(nodeName) + i
@@ -1778,6 +1724,27 @@ class Skin:
                 weight.extend([1.0, 0.0, 0.0, 0.0])
                 boneIdx.extend([nodeIdx] * 4)
         self.clsWeight[meshName] = [weight, boneIdx]
+
+    def loadBone(self, name, parentName, pos, rot=NoeVec3((0.0,0.0,0.0)), scl=NoeVec3((1.0,1.0,1.0)), mtx=None, parentIdx=None):
+        if not mtx:
+            mtx = NoeAngles([rot[0]*noesis.g_flRadToDeg, rot[1]*noesis.g_flRadToDeg, rot[2]*noesis.g_flRadToDeg]).toMat43_XYZ()
+            mtx[0] *= scl[0]
+            mtx[1] *= scl[1]
+            mtx[2] *= scl[2]
+            mtx[3] = NoeVec3((pos[0], pos[1], pos[2]))
+        idx = len(self.boneList)
+        parent = -1
+        if parentName:
+            try:
+                parent = self.boneDict[parentName]
+            except:
+                self.parentRetry.append([idx, parentName])
+                parent = -1
+        elif parentIdx != None:
+            parent = parentIdx
+        self.boneDict[name] = idx
+        self.boneList.append(NoeBone(idx, name, mtx, None, parent))
+        return mtx
 
 class Object:
     
@@ -3213,8 +3180,6 @@ class Motion:
         self.animList = []
         self.names = []
         self.frameCounts = []
-        self.isAC = False
-        self.isMGF = False
         self.endian = 0
         self.addressSpace = 32
         
@@ -3270,7 +3235,7 @@ class Motion:
             if self.endian:
                 ds.setEndian(NOE_BIGENDIAN)
             divData.append(ds)
-        if self.isMGF:
+        if self.boneData.game == 'MGF':
             self.readAnimMotMgf(name, frameCount, animMap, boneNames, divData)
         else:
             self.readAnimMot(name, frameCount, animMap, boneNames, divData)
@@ -3304,11 +3269,6 @@ class Motion:
     def readAnim(self, bs, name, frameCount, animMap, boneNames):
         kfBones = []
         cnt = 0
-        if len(boneNames) == 173:
-            self.isAC = True
-            usedBones = initMotionBonesAC()
-        else:
-            usedBones = initMotionBonesAFT()
         for boneName in boneNames:
             if animMap[cnt] == 0x00 and animMap[cnt+1] == 0x00 and animMap[cnt+2] == 0x00:
                 cnt += 3
@@ -3323,15 +3283,15 @@ class Motion:
             cnt += 1
             if boneName in self.boneData.type and self.boneData.type[boneName] == 0x03:
                 cnt += 3
-            if boneName in usedBones:
-                boneKey = self.buildAnim(frameCount, boneName, xKeyFrames, yKeyFrames, zKeyFrames)
-                kfBones.append(boneKey)
+            # if name == 'MIK_KUCHI_A':
+            #     print("'"+ boneName +"': NoeVec3(("+str(xKeyFrames.keys[0])+', '+str(yKeyFrames.keys[0])+', '+str(zKeyFrames.keys[0])+')), ')
+            boneKey = self.buildAnim(frameCount, boneName, xKeyFrames, yKeyFrames, zKeyFrames)
+            kfBones.append(boneKey)
         self.animList.append(NoeKeyFramedAnim(name, self.boneList, kfBones, 1.0))
 
     def readAnimMot(self, name, frameCount, animMap, boneNames, divData):
         kfBones = []
         cnt = 0
-        usedBones = initMotionBonesAFT()
         for boneName in boneNames:
             if animMap[cnt] == 0x00 and animMap[cnt+1] == 0x00 and animMap[cnt+2] == 0x00:
                 cnt += 3
@@ -3346,9 +3306,8 @@ class Motion:
             cnt += 1
             if boneName in self.boneData.type and self.boneData.type[boneName] == 0x03:
                 cnt += 3
-            if boneName in usedBones:
-                boneKey = self.buildAnim(frameCount, boneName, xKeyFrames, yKeyFrames, zKeyFrames)
-                kfBones.append(boneKey)
+            boneKey = self.buildAnim(frameCount, boneName, xKeyFrames, yKeyFrames, zKeyFrames)
+            kfBones.append(boneKey)
         self.animList.append(NoeKeyFramedAnim(name, self.boneList, kfBones, 1.0))
 
     def readAnimMotMgf(self, name, frameCount, animMap, boneNames, divData):
@@ -3375,6 +3334,8 @@ class Motion:
             cnt += 1
             zRotKeyFrames = self.readKeyFramesMot(divData, animMap[cnt])
             cnt += 1
+            if xRotKeyFrames.keys[0] != 0.0 or yRotKeyFrames.keys[0] != 0.0 or zRotKeyFrames.keys[0] != 0.0:
+                print("'"+ boneName +"': NoeVec3(("+str(xRotKeyFrames.keys[0])+', '+str(yRotKeyFrames.keys[0])+', '+str(zRotKeyFrames.keys[0])+')), ')
             if boneName in self.boneData.type and self.boneData.type[boneName] == 0x00:
                 xSclKeyFrames = self.readKeyFramesMot(divData, animMap[cnt])
                 cnt += 1
@@ -3489,10 +3450,7 @@ class Motion:
                     keys = self.loadKeys(frameCount, xKeyFrames, yKeyFrames, zKeyFrames, 1)
                     boneKey.setTranslation(keys, noesis.NOEKF_TRANSLATION_VECTOR_3, noesis.NOEKF_INTERPOLATE_LINEAR)
             else:
-                if boneName == "cl_kao":
-                    keys = self.loadRotKeys(frameCount, xKeyFrames, zKeyFrames, yKeyFrames, boneName, 1)
-                else:
-                    keys = self.loadRotKeys(frameCount, xKeyFrames, yKeyFrames, zKeyFrames, boneName, 1)
+                keys = self.loadRotKeys(frameCount, xKeyFrames, yKeyFrames, zKeyFrames, boneName, 1)
                 boneKey.setRotation(keys, noesis.NOEKF_ROTATION_QUATERNION_4, noesis.NOEKF_INTERPOLATE_LINEAR)
         elif boneName.endswith("_cp") or boneName == "gblctr":
             keys = self.loadKeys(frameCount, xKeyFrames, yKeyFrames, zKeyFrames, 1)
@@ -3516,7 +3474,7 @@ class Motion:
     def loadKeys(self, frameCount, xKeyFrames, yKeyFrames, zKeyFrames, interpType):
         keys = []
         if xKeyFrames.keyType <= 0x01 and yKeyFrames.keyType <= 0x01 and zKeyFrames.keyType <= 0x01:
-            keys.append(NoeKeyFramedValue(0, [xKeyFrames.keys[0], yKeyFrames.keys[0], zKeyFrames.keys[0]]))
+            keys.append(NoeKeyFramedValue(0, NoeVec3((xKeyFrames.keys[0], yKeyFrames.keys[0], zKeyFrames.keys[0]))))
         else:
             xKey = interpolate(frameCount, xKeyFrames, interpType)
             yKey = interpolate(frameCount, yKeyFrames, interpType)
@@ -3526,22 +3484,13 @@ class Motion:
 
     def loadRotKeys(self, frameCount, xKeyFrames, yKeyFrames, zKeyFrames, boneName, interpType):
         keys = []
-        if self.isAC:
-            if boneName == "nl_oya_l_wj" or boneName == "nl_oya_b_l_wj" or boneName == "nl_oya_c_l_wj" or boneName == "nl_oya_r_wj" or boneName == "nl_oya_b_r_wj" or boneName == "nl_oya_c_r_wj":
-                fix = NoeMat43().toAngles()
-            else:
-                fix = (self.boneList[self.boneDict[boneName]]._matrix * self.boneList[self.boneList[self.boneDict[boneName]].parentIndex]._matrix.inverse()).toAngles()
-        elif self.isMGF:
-            fix = NoeMat43().toAngles()
-        else:
-            fix = (self.boneList[self.boneDict[boneName]]._matrix * self.boneList[self.boneList[self.boneDict[boneName]].parentIndex]._matrix.inverse()).toAngles()
         if xKeyFrames.keyType <= 0x01 and yKeyFrames.keyType <= 0x01 and zKeyFrames.keyType <= 0x01:
-            keys.append(NoeKeyFramedValue(0, (NoeAngles([xKeyFrames.keys[0]*noesis.g_flRadToDeg, yKeyFrames.keys[0]*noesis.g_flRadToDeg, zKeyFrames.keys[0]*noesis.g_flRadToDeg]).toMat43_XYZ() * fix.toMat43()).toQuat()))
+            keys.append(NoeKeyFramedValue(0, NoeAngles([xKeyFrames.keys[0]*noesis.g_flRadToDeg, yKeyFrames.keys[0]*noesis.g_flRadToDeg, zKeyFrames.keys[0]*noesis.g_flRadToDeg]).toMat43_XYZ().toQuat()))
         else:
             xKey = interpolate(frameCount, xKeyFrames, interpType)
             yKey = interpolate(frameCount, yKeyFrames, interpType)
             zKey = interpolate(frameCount, zKeyFrames, interpType)
-            keys = cleanupRotKeys(frameCount, xKey, yKey, zKey, fix)
+            keys = cleanupRotKeys(frameCount, xKey, yKey, zKey)
         return keys
 
 class Motc:
@@ -3551,7 +3500,7 @@ class Motc:
         self.names = []
         self.frameCounts = []
 
-    def readMotc(self, data, boneData, boneList, boneDict, fileName, fileDir, isMGF):
+    def readMotc(self, data, boneData, boneList, boneDict, fileName, fileDir):
         bs = NoeBitStream(data)
         magic = bs.readBytes(4).decode("ASCII")
         fileSize = bs.readUInt()
@@ -3561,7 +3510,6 @@ class Motc:
         dataSize = bs.readUInt()
         addressSpace = getAddressSpace(bs, fileSize, dataOff, dataSize)
         motion = Motion(None, boneData, boneList, boneDict)
-        motion.isMGF = isMGF
         if addressSpace == 32:
             bs.seek(dataOff, NOESEEK_ABS)
             if endian == 0x18000000:
@@ -4301,18 +4249,39 @@ class A3da:
                 else:
                     parent = boneDict[a3daDict[str(parentIdx)]['name']]
                     mtx = copy.deepcopy(boneList[parent]._matrix)
-                    # if boneName == 'n_stick_y':
-                    #     mtx = copy.deepcopy(boneList[parent]._matrix)
-                    #     mtx2 = copy.deepcopy(boneList[boneDict['j_stick_wj']]._matrix)
-                    #     mtx[3] = mtx2[3]
-                    if not boneName.startswith('j_') and visKeyFrames.keyType == 0x00:
-                        if xTranKeyFrames.keyType <= 0x01 and yTranKeyFrames.keyType <= 0x01 and zTranKeyFrames.keyType <= 0x01:
+                    if boneName.startswith('n_') and boneName != 'n_hara':
+                        if 'j'+boneName[1:]+'_wj' in boneDict:
+                            print(boneName)
+                            mtx = copy.deepcopy(boneList[boneDict['j'+boneName[1:]+'_wj']]._matrix)
+                        elif 'j'+boneName[1:-1]+'wj' in boneDict:
+                            print(boneName)
+                            mtx = copy.deepcopy(boneList[boneDict['j'+boneName[1:-1]+'wj']]._matrix)
+                        elif xTranKeyFrames.keyType <= 0x01 and yTranKeyFrames.keyType <= 0x01 and zTranKeyFrames.keyType <= 0x01:
                             if xRotKeyFrames.keyType <= 0x01 and yRotKeyFrames.keyType <= 0x01 and zRotKeyFrames.keyType <= 0x01:
                                 mtx2 = NoeAngles([xRotKeyFrames.keys[0]*noesis.g_flRadToDeg, yRotKeyFrames.keys[0]*noesis.g_flRadToDeg, zRotKeyFrames.keys[0]*noesis.g_flRadToDeg]).toMat43_XYZ()
                                 mtx2[3] = NoeVec3((xTranKeyFrames.keys[0], yTranKeyFrames.keys[0], zTranKeyFrames.keys[0]))
                                 tmpList = [NoeBone(0, 'tmp1', mtx, None, -1), NoeBone(1, 'tmp2', mtx2, None, 0)]
                                 tmpList = rapi.multiplyBones(tmpList)
                                 mtx = tmpList[1]._matrix
+                            else:
+                                mtx2 = NoeMat43()
+                                mtx2[3] = NoeVec3((xTranKeyFrames.keys[0], yTranKeyFrames.keys[0], zTranKeyFrames.keys[0]))
+                                tmpList = [NoeBone(0, 'tmp1', mtx, None, -1), NoeBone(1, 'tmp2', mtx2, None, 0)]
+                                tmpList = rapi.multiplyBones(tmpList)
+                                mtx = tmpList[1]._matrix
+                    elif xTranKeyFrames.keyType <= 0x01 and yTranKeyFrames.keyType <= 0x01 and zTranKeyFrames.keyType <= 0x01:
+                        if xRotKeyFrames.keyType <= 0x01 and yRotKeyFrames.keyType <= 0x01 and zRotKeyFrames.keyType <= 0x01:
+                            mtx2 = NoeAngles([xRotKeyFrames.keys[0]*noesis.g_flRadToDeg, yRotKeyFrames.keys[0]*noesis.g_flRadToDeg, zRotKeyFrames.keys[0]*noesis.g_flRadToDeg]).toMat43_XYZ()
+                            mtx2[3] = NoeVec3((xTranKeyFrames.keys[0], yTranKeyFrames.keys[0], zTranKeyFrames.keys[0]))
+                            tmpList = [NoeBone(0, 'tmp1', mtx, None, -1), NoeBone(1, 'tmp2', mtx2, None, 0)]
+                            tmpList = rapi.multiplyBones(tmpList)
+                            mtx = tmpList[1]._matrix
+                        else:
+                            mtx2 = NoeMat43()
+                            mtx2[3] = NoeVec3((xTranKeyFrames.keys[0], yTranKeyFrames.keys[0], zTranKeyFrames.keys[0]))
+                            tmpList = [NoeBone(0, 'tmp1', mtx, None, -1), NoeBone(1, 'tmp2', mtx2, None, 0)]
+                            tmpList = rapi.multiplyBones(tmpList)
+                            mtx = tmpList[1]._matrix
                 boneList.append(NoeBone(idx, boneName, mtx, None, parent))
             else:
                 parentIdx = a3daDict[str(i)]['parent']
@@ -4320,7 +4289,9 @@ class A3da:
                     parent = -1
                 else:
                     parent = boneDict[a3daDict[str(parentIdx)]['name']]
-                boneList[boneDict[boneName]].parentIndex = parent
+                if not boneName.endswith('_mot'):
+                    boneList[boneDict[boneName]].parentName = boneList[parent].name
+                    boneList[boneDict[boneName]].parentIndex = parent
             boneKey = NoeKeyFramedBone(boneDict[boneName])
             boneKey.setTranslation(tranKeys, noesis.NOEKF_TRANSLATION_VECTOR_3, noesis.NOEKF_INTERPOLATE_LINEAR)
             boneKey.setRotation(rotKeys, noesis.NOEKF_ROTATION_QUATERNION_4, noesis.NOEKF_INTERPOLATE_LINEAR)
@@ -4481,7 +4452,7 @@ class A3da:
     def loadKeys(self, frameCount, keyFrames):
         keys = []
         if keyFrames.keyType <= 0x01:
-            keys.append(NoeKeyFramedValue(0, [keyFrames.keys[0], 0.0, 0.0]))
+            keys.append(NoeKeyFramedValue(0, NoeVec3((keyFrames.keys[0], 0.0, 0.0))))
         else:
             key = interpolate(frameCount, keyFrames, keyFrames.interpType)
             keys = cleanupKeys(frameCount, key, [0.0]*frameCount, [0.0]*frameCount)
@@ -4490,7 +4461,7 @@ class A3da:
     def loadKeysXYZ(self, frameCount, xKeyFrames, yKeyFrames, zKeyFrames):
         keys = []
         if xKeyFrames.keyType <= 0x01 and yKeyFrames.keyType <= 0x01 and zKeyFrames.keyType <= 0x01:
-            keys.append(NoeKeyFramedValue(0, [xKeyFrames.keys[0], yKeyFrames.keys[0], zKeyFrames.keys[0]]))
+            keys.append(NoeKeyFramedValue(0, NoeVec3((xKeyFrames.keys[0], yKeyFrames.keys[0], zKeyFrames.keys[0]))))
         else:
             xKey = interpolate(frameCount, xKeyFrames, xKeyFrames.interpType)
             yKey = interpolate(frameCount, yKeyFrames, yKeyFrames.interpType)
@@ -4506,7 +4477,7 @@ class A3da:
             xKey = interpolate(frameCount, xKeyFrames, xKeyFrames.interpType)
             yKey = interpolate(frameCount, yKeyFrames, yKeyFrames.interpType)
             zKey = interpolate(frameCount, zKeyFrames, zKeyFrames.interpType)
-            keys = cleanupRotKeys(frameCount, xKey, yKey, zKey, NoeAngles())
+            keys = cleanupRotKeys(frameCount, xKey, yKey, zKey)
         return keys
 
 def vmdExport(nameList, frameCountList, animList, morphList, boneDictName, morphDictName):
@@ -4595,6 +4566,14 @@ def getBoneData(path, name, char, charId):
         fileDir = parent2Dir + "/" + char + "_" + charId
     elif rapi.checkFileExists(parent3Dir + "/" + char + "_" + charId):
         fileDir = parent3Dir + "/" + char + "_" + charId
+    elif rapi.checkFileExists(path + char + "_002.bon"):
+        fileDir = path + char + "_002.bon"
+    elif rapi.checkFileExists(parent1Dir + "/" + char + "_002.bon"):
+        fileDir = parent1Dir + "/" + char + "_002.bon"
+    elif rapi.checkFileExists(parent2Dir + "/" + char + "_002.bon"):
+        fileDir = parent2Dir + "/" + char + "_002.bon"
+    elif rapi.checkFileExists(parent3Dir + "/" + char + "_002.bon"):
+        fileDir = parent3Dir + "/" + char + "_002.bon"
     elif rapi.checkFileExists(path + char + "_001.bon"):
         fileDir = path + char + "_001.bon"
     elif rapi.checkFileExists(parent1Dir + "/" + char + "_001.bon"):
@@ -4915,19 +4894,19 @@ def cleanupKeys(frameCount, xKey, yKey, zKey):
         if [xKey[i], yKey[i], zKey[i]] == [xKey[i-1], yKey[i-1], zKey[i-1]] and [xKey[i], yKey[i], zKey[i]] == [xKey[i+1], yKey[i+1], zKey[i+1]]:
             continue
         else:
-            keys.append(NoeKeyFramedValue(i, [xKey[i], yKey[i], zKey[i]]))
-    keys.append(NoeKeyFramedValue(frameCount - 1, [xKey[frameCount - 1], yKey[frameCount - 1], zKey[frameCount - 1]]))
+            keys.append(NoeKeyFramedValue(i, NoeVec3((xKey[i], yKey[i], zKey[i]))))
+    keys.append(NoeKeyFramedValue(frameCount - 1, NoeVec3((xKey[frameCount - 1], yKey[frameCount - 1], zKey[frameCount - 1]))))
     return keys
 
-def cleanupRotKeys(frameCount, xKey, yKey, zKey, fix):
+def cleanupRotKeys(frameCount, xKey, yKey, zKey):
     keys = []
-    keys.append(NoeKeyFramedValue(0, (NoeAngles([xKey[0]*noesis.g_flRadToDeg, yKey[0]*noesis.g_flRadToDeg, zKey[0]*noesis.g_flRadToDeg]).toMat43_XYZ() * fix.toMat43()).toQuat()))
+    keys.append(NoeKeyFramedValue(0, NoeAngles([xKey[0]*noesis.g_flRadToDeg, yKey[0]*noesis.g_flRadToDeg, zKey[0]*noesis.g_flRadToDeg]).toMat43_XYZ().toQuat()))
     for i in range(1, frameCount - 1):
         if [xKey[i], yKey[i], zKey[i]] == [xKey[i-1], yKey[i-1], zKey[i-1]] and [xKey[i], yKey[i], zKey[i]] == [xKey[i+1], yKey[i+1], zKey[i+1]]:
             continue
         else:
-            keys.append(NoeKeyFramedValue(i, (NoeAngles([xKey[i]*noesis.g_flRadToDeg, yKey[i]*noesis.g_flRadToDeg, zKey[i]*noesis.g_flRadToDeg]).toMat43_XYZ() * fix.toMat43()).toQuat()))
-    keys.append(NoeKeyFramedValue(frameCount - 1, (NoeAngles([xKey[-1]*noesis.g_flRadToDeg, yKey[-1]*noesis.g_flRadToDeg, zKey[-1]*noesis.g_flRadToDeg]).toMat43_XYZ() * fix.toMat43()).toQuat()))
+            keys.append(NoeKeyFramedValue(i, NoeAngles([xKey[i]*noesis.g_flRadToDeg, yKey[i]*noesis.g_flRadToDeg, zKey[i]*noesis.g_flRadToDeg]).toMat43_XYZ().toQuat()))
+    keys.append(NoeKeyFramedValue(frameCount - 1, NoeAngles([xKey[-1]*noesis.g_flRadToDeg, yKey[-1]*noesis.g_flRadToDeg, zKey[-1]*noesis.g_flRadToDeg]).toMat43_XYZ().toQuat()))
     return keys
 
 def nested_update(d, v):
@@ -4937,59 +4916,771 @@ def nested_update(d, v):
             else:
                 d[key] = v[key]
 
-def initMotionBonesAFT():
-    usedBones = ["n_hara_cp", "kg_hara_y", "kl_hara_xz", "kl_hara_etc", "e_mune_cp", "cl_mune", "kl_mune_b_wj", "kl_kubi", "e_kao_cp", "cl_kao", "kl_ago_wj", "tl_tooth_under_wj",
-                "kl_eye_l", "kl_highlight_l_wj", "kl_eye_r", "kl_highlight_r_wj", "tl_eyelid_l_a_wj", "tl_eyelid_l_b_wj", "tl_eyelid_r_a_wj", "tl_eyelid_r_b_wj", "tl_kuti_d_wj",
-                "tl_kuti_d_l_wj", "tl_kuti_d_r_wj", "tl_kuti_ds_l_wj", "tl_kuti_ds_r_wj", "tl_kuti_l_wj", "tl_kuti_m_l_wj", "tl_kuti_m_r_wj", "tl_kuti_r_wj", "tl_kuti_u_wj",
-                "tl_kuti_u_l_wj", "tl_kuti_u_r_wj", "tl_mabu_l_d_a_wj", "tl_mabu_l_d_b_wj", "tl_mabu_l_d_c_wj", "tl_mabu_l_u_a_wj", "tl_mabu_l_u_b_wj", "tl_eyelashes_l_wj",
-                "tl_mabu_l_u_c_wj", "tl_mabu_r_d_a_wj", "tl_mabu_r_d_b_wj", "tl_mabu_r_d_c_wj", "tl_mabu_r_u_a_wj", "tl_mabu_r_u_b_wj", "tl_eyelashes_r_wj", "tl_mabu_r_u_c_wj",
-                "tl_mayu_l_wj", "tl_mayu_l_b_wj", "tl_mayu_l_c_wj", "tl_mayu_r_wj", "tl_mayu_r_b_wj", "tl_mayu_r_c_wj", "tl_tooth_upper_wj", "kl_waki_l_wj", "e_ude_l_cp",
-                "kl_te_l_wj", "nl_hito_l_wj", "nl_hito_b_l_wj", "nl_hito_c_l_wj", "nl_ko_l_wj", "nl_ko_b_l_wj", "nl_ko_c_l_wj", "nl_kusu_l_wj", "nl_kusu_b_l_wj", "nl_kusu_c_l_wj",
-                "nl_naka_l_wj", "nl_naka_b_l_wj", "nl_naka_c_l_wj", "nl_oya_l_wj", "nl_oya_b_l_wj", "nl_oya_c_l_wj", "kl_waki_r_wj", "e_ude_r_cp", "kl_te_r_wj", "nl_hito_r_wj",
-                "nl_hito_b_r_wj", "nl_hito_c_r_wj", "nl_ko_r_wj", "nl_ko_b_r_wj", "nl_ko_c_r_wj", "nl_kusu_r_wj", "nl_kusu_b_r_wj", "nl_kusu_c_r_wj", "nl_naka_r_wj", "nl_naka_b_r_wj",
-                "nl_naka_c_r_wj", "nl_oya_r_wj", "nl_oya_b_r_wj", "nl_oya_c_r_wj", "tl_up_kata_l", "tl_up_kata_r", "kl_kosi_y", "kl_kosi_xz", "kl_kosi_etc_wj", "e_sune_l_cp", "cl_momo_l",
-                "kl_asi_l_wj_co", "kl_toe_l_wj", "e_sune_r_cp", "cl_momo_r", "kl_asi_r_wj_co", "kl_toe_r_wj", "gblctr", "kg_ya_ex"]
-    return usedBones
+def baseSkelAFT():
+    boneTrans = {'MIK': {'n_hara_cp': NoeVec3((0.0, 1.0549999475479126, 0.0))}, 'KAI': {'n_hara_cp': NoeVec3((0.0, 1.0549999475479126, 0.0))}, 'LEN': {'n_hara_cp': NoeVec3((0.0, 1.0549999475479126, 0.0))},
+    'LUK': {'n_hara_cp': NoeVec3((0.0, 1.0549999475479126, 0.0))}, 'MEI': {'n_hara_cp': NoeVec3((0.0, 1.0549999475479126, 0.0))}, 'RIN': {'n_hara_cp': NoeVec3((0.0, 1.0549999475479126, 0.0))},
+    'HAK': {'n_hara_cp': NoeVec3((0.0, 1.0549999475479126, 0.0))}, 'NER': {'n_hara_cp': NoeVec3((0.0, 1.0549999475479126, 0.0))}, 'SAK': {'n_hara_cp': NoeVec3((0.0, 1.0549999475479126, 0.0))},
+    'TET': {'n_hara_cp': NoeVec3((0.0, 1.0549999475479126, 0.0))}}
+    boneRot = {'n_hara': NoeVec3((0.0, 1.570796012878418, 0.0)), 'n_mune_b': NoeVec3((0.0, -1.570796012878418, -1.570796012878418)), 'n_kao': NoeVec3((1.570796012878418, 0.0, -3.1415929794311523)), 
+    'face_root': NoeVec3((1.570796012878418, 0.0, 1.570796012878418)), 'n_waki_l': NoeVec3((1.570796012878418, 0.0, 1.570796012878418)), 'c_kata_l': NoeVec3((-1.570796012878418, -1.570796012878418, -1.570796012878418)), 
+    'n_hito_l_ex': NoeVec3((0.0, 0.0, -0.15707960724830627)), 'n_ko_l_ex': NoeVec3((-0.13962629437446594, 0.0, 0.27925270795822144)), 'n_kusu_l_ex': NoeVec3((0.0, 0.0, 0.15707960724830627)), 
+    'n_naka_l_ex': NoeVec3((0.0, 0.0, -0.01745329052209854)), 'n_oya_l_ex': NoeVec3((1.3089970350265503, 0.2094395011663437, -0.4188790023326874)), 'n_skata_l_wj_cd_ex': NoeVec3((0.0, 0.48869219422340393, 0.01745329052209854)), 
+    'n_skata_b_l_wj_cd_cu_ex': NoeVec3((8.317972088889292e-08, 0.0, 0.0)), 'n_skata_c_l_wj_cd_cu_ex': NoeVec3((8.363255687982019e-08, 0.0, 0.0)), 'n_waki_r': NoeVec3((1.570796012878418, 0.0, 1.570796012878418)), 
+    'c_kata_r': NoeVec3((-1.570796012878418, 1.570796012878418, 1.570796012878418)), 'n_hito_r_ex': NoeVec3((0.0, 0.0, -0.15707960724830627)), 'n_ko_r_ex': NoeVec3((0.13962629437446594, 0.0, 0.27925270795822144)), 
+    'n_kusu_r_ex': NoeVec3((0.0, 0.0, 0.15707960724830627)), 'n_naka_r_ex': NoeVec3((0.0, 0.0, -0.01745329052209854)), 'n_oya_r_ex': NoeVec3((-1.3089970350265503, -0.2094395011663437, -0.4188790023326874)), 
+    'n_skata_r_wj_cd_ex': NoeVec3((0.0, -0.48869219422340393, 0.01745329052209854)), 'n_skata_b_r_wj_cd_cu_ex': NoeVec3((-1.5131250563626963e-07, 0.0, 0.0)), 'n_skata_c_r_wj_cd_cu_ex': NoeVec3((7.524719336515773e-08, 0.0, 0.0))}
+    return boneTrans, boneRot
 
-def initMotionBonesAC():
-    usedBones = ["n_hara_cp", "kg_hara_y", "kl_hara_xz", "kl_hara_etc", "e_mune_cp", "cl_mune", "kl_mune_b_wj", "kl_kubi", "e_kao_cp", "cl_kao", "kl_ago_wj", "tl_tooth_under_wj",
-                "kl_eye_l_wj", "kl_eye_r_wj", "tl_eyelid_l_a_wj", "tl_eyelid_l_b_wj", "tl_eyelid_r_a_wj", "tl_eyelid_r_b_wj", "tl_kuti_d_wj",
-                "tl_kuti_d_l_wj", "tl_kuti_d_r_wj", "tl_kuti_ds_l_wj", "tl_kuti_ds_r_wj", "tl_kuti_l_wj", "tl_kuti_m_l_wj", "tl_kuti_m_r_wj", "tl_kuti_r_wj", "tl_kuti_u_wj",
-                "tl_kuti_u_l_wj", "tl_kuti_u_r_wj", "tl_mabu_l_d_wj", "tl_mabu_l_d_l_wj", "tl_mabu_l_d_r_wj", "tl_mabu_l_u_wj", "tl_mabu_l_u_l_wj", "tl_eyelashes_l_wj",
-                "tl_mabu_l_u_r_wj", "tl_mabu_r_d_wj", "tl_mabu_r_d_l_wj", "tl_mabu_r_d_r_wj", "tl_mabu_r_u_wj", "tl_mabu_r_u_l_wj", "tl_eyelashes_r_wj", "tl_mabu_r_u_r_wj",
-                "tl_mayu_l_wj", "tl_mayu_b_l_wj", "tl_mayu_c_l_wj", "tl_mayu_r_wj", "tl_mayu_b_r_wj", "tl_mayu_c_r_wj", "tl_tooth_upper_wj", "kl_waki_l_wj", "e_ude_l_cp",
-                "kl_te_l_wj", "nl_hito_l_wj", "nl_hito_b_l_wj", "nl_hito_c_l_wj", "nl_ko_l_wj", "nl_ko_b_l_wj", "nl_ko_c_l_wj", "nl_kusu_l_wj", "nl_kusu_b_l_wj", "nl_kusu_c_l_wj",
-                "nl_naka_l_wj", "nl_naka_b_l_wj", "nl_naka_c_l_wj", "nl_oya_l_wj", "nl_oya_b_l_wj", "nl_oya_c_l_wj", "kl_waki_r_wj", "e_ude_r_cp", "kl_te_r_wj", "nl_hito_r_wj",
-                "nl_hito_b_r_wj", "nl_hito_c_r_wj", "nl_ko_r_wj", "nl_ko_b_r_wj", "nl_ko_c_r_wj", "nl_kusu_r_wj", "nl_kusu_b_r_wj", "nl_kusu_c_r_wj", "nl_naka_r_wj", "nl_naka_b_r_wj",
-                "nl_naka_c_r_wj", "nl_oya_r_wj", "nl_oya_b_r_wj", "nl_oya_c_r_wj", "tl_up_kata_l", "tl_up_kata_r", "kl_kosi_y", "kl_kosi_xz", "kl_kosi_etc_wj", "e_sune_l_cp", "cl_momo_l",
-                "kl_asi_l_wj_co", "kl_toe_l_wj", "e_sune_r_cp", "cl_momo_r", "kl_asi_r_wj_co", "kl_toe_r_wj", "gblctr", "kg_ya_ex"]
-    return usedBones
+def baseSkelAC():
+    boneTrans = {'MIK': {'n_hara_cp': NoeVec3((0.0, 1.0549999475479126, 0.0))}, 'KAI': {'n_hara_cp': NoeVec3((0.0, 1.0549999475479126, 0.0))}, 'LEN': {'n_hara_cp': NoeVec3((0.0, 1.0549999475479126, 0.0))},
+    'LUK': {'n_hara_cp': NoeVec3((0.0, 1.0549999475479126, 0.0))}, 'MEI': {'n_hara_cp': NoeVec3((0.0, 1.0549999475479126, 0.0))}, 'RIN': {'n_hara_cp': NoeVec3((0.0, 1.0549999475479126, 0.0))},
+    'HAK': {'n_hara_cp': NoeVec3((0.0, 1.0549999475479126, 0.0))}, 'NER': {'n_hara_cp': NoeVec3((0.0, 1.0549999475479126, 0.0))}, 'SAK': {'n_hara_cp': NoeVec3((0.0, 1.0549999475479126, 0.0))}}
+    boneRot = {'n_hara': NoeVec3((0.0, 1.570796012878418, 0.0)), 'n_mune_b': NoeVec3((-0.7853981852531433, -1.570796012878418, -0.7853981852531433)), 'n_kao': NoeVec3((1.570796012878418, 0.0, -3.1415929794311523)), 
+    'face_root': NoeVec3((1.570796012878418, 0.0, 1.570796012878418)), 'n_waki_l': NoeVec3((1.570796012878418, 0.0, 1.570796012878418)), 'c_kata_l': NoeVec3((-1.570796012878418, -1.570796012878418, -1.570796012878418)), 
+    'nl_oya_l_wj': NoeVec3((-1.570796012878418, 0.0, -0.5235987901687622)), 'nl_oya_b_l_wj': NoeVec3((0.0, -0.5235987901687622, 0.0)), 'n_skata_l_wj_cd_ex': NoeVec3((0.005010894034057856, 0.4882011115550995, 0.02011800929903984)), 
+    'n_skata_b_l_wj_cd_cu_ex': NoeVec3((-0.0004955081967636943, 0.0, 0.0)), 'n_skata_c_l_wj_cd_cu_ex': NoeVec3((-0.0017838289495557547, 0.0, 0.0)), 'n_waki_r': NoeVec3((1.570796012878418, 0.0, 1.570796012878418)), 
+    'c_kata_r': NoeVec3((-1.570796012878418, 1.570796012878418, 1.570796012878418)), 'nl_oya_r_wj': NoeVec3((1.570796012878418, 0.0, -0.5235987901687622)), 'nl_oya_b_r_wj': NoeVec3((0.0, 0.5235987901687622, 0.0)), 
+    'n_skata_r_wj_cd_ex': NoeVec3((-0.005010895896703005, -0.4882011115550995, 0.02011800929903984)), 'n_skata_b_r_wj_cd_cu_ex': NoeVec3((0.0004955081967636943, 0.0, 0.0)), 
+    'n_skata_c_r_wj_cd_cu_ex': NoeVec3((0.0017838289495557547, 0.0, 0.0)), 'n_momo_l_cd_ex': NoeVec3((0.012819809839129448, 0.0, 0.0)), 'n_momo_r_cd_ex': NoeVec3((-0.012819809839129448, 0.0, 0.0))}
+    return boneTrans, boneRot
+
+def baseSkelVF5():
+    boneTrans = {'AKI': {'n_hara_cp': NoeVec3((0.0, 1.0579999685287476, 0.0))}, 'AOI': {'n_hara_cp': NoeVec3((0.0, 1.0670000314712524, 0.0))}, 'BRA': {'n_hara_cp': NoeVec3((0.0, 1.1039999723434448, 0.0))}, 
+    'DUR': {'n_hara_cp': NoeVec3((0.0, 1.1759999990463257, 0.0))}, 'GOH': {'n_hara_cp': NoeVec3((0.0, 1.055999994277954, 0.0))}, 'JAK': {'n_hara_cp': NoeVec3((0.0, 1.159999966621399, 0.0))},
+    'JEF': {'n_hara_cp': NoeVec3((0.0, 1.1759999990463257, 0.0))}, 'KAG': {'n_hara_cp': NoeVec3((0.0, 1.065999984741211, 0.0))}, 'KRT': {'n_hara_cp': NoeVec3((0.0, 1.2070000171661377, 0.0))},
+    'LAU': {'n_hara_cp': NoeVec3((0.0, 1.1109999418258667, 0.0))}, 'LEI': {'n_hara_cp': NoeVec3((0.0, 1.1109999418258667, 0.0))}, 'LIO': {'n_hara_cp': NoeVec3((0.0, 1.1349999904632568, 0.0))},
+    'MON': {'n_hara_cp': NoeVec3((0.0, 1.034000039100647, 0.0))}, 'MSK': {'n_hara_cp': NoeVec3((0.0, 0.9449999928474426, 0.0))}, 'PAI': {'n_hara_cp': NoeVec3((0.0, 1.065000057220459, 0.0))},
+    'SAR': {'n_hara_cp': NoeVec3((0.0, 1.13100004196167, 0.0))}, 'SHU': {'n_hara_cp': NoeVec3((0.0, 0.9890000224113464, 0.0))}, 'TAK': {'n_hara_cp': NoeVec3((0.0, 1.1399999856948853, 0.0))},
+    'VAN': {'n_hara_cp': NoeVec3((0.0, 1.1759999990463257, 0.0))}, 'WOL': {'n_hara_cp': NoeVec3((0.0, 1.1759999990463257, 0.0))}}
+    boneRot = {'n_hara': NoeVec3((0.0, 1.570796012878418, 0.0)), 'n_mune_b': NoeVec3((-0.7853981852531433, -1.570796012878418, -0.7853981852531433)), 'n_kao': NoeVec3((-1.570796012878418, -3.1415929794311523, 0.0)), 
+    'face_root': NoeVec3((1.570796012878418, 0.0, 1.570796012878418)), 'n_waki_l': NoeVec3((1.570796012878418, 0.0, 1.570796012878418)), 'c_kata_l': NoeVec3((-1.570796012878418, -1.570796012878418, -1.570796012878418)), 
+    'nl_oya_l_wj': NoeVec3((-1.570796012878418, 0.0, -0.5235987901687622)), 'nl_oya_b_l_wj': NoeVec3((0.0, -0.5235987901687622, 0.0)), 'n_hiji_l_wj_ex': NoeVec3((0.0, 0.0, -0.004363323096185923)), 
+    'n_waki_r': NoeVec3((1.570796012878418, 0.0, 1.570796012878418)), 'c_kata_r': NoeVec3((-1.570796012878418, 1.570796012878418, 1.570796012878418)), 'nl_oya_r_wj': NoeVec3((1.570796012878418, 0.0, -0.5235987901687622)), 
+    'nl_oya_b_r_wj': NoeVec3((0.0, 0.5235987901687622, 0.0)), 'n_hiji_r_wj_ex': NoeVec3((0.0, 0.0, -0.004363323096185923)), 'kl_asi_l_wj_co': NoeVec3((0.0, 0.0, -0.008726612664759159)), 
+    'n_hiza_l_wj_ex': NoeVec3((0.0, 0.0, 0.004363323096185923)), 'kl_asi_r_wj_co': NoeVec3((0.0, 0.0, -0.008726646192371845)), 'n_hiza_r_wj_ex': NoeVec3((0.0, 0.0, 0.004363323096185923)), }
+    return boneTrans, boneRot
+
+def baseSkelMGF():
+    boneRot = {'ARH': {'lskirt_a_01_wj': NoeVec3((0.0, -0.0872664600610733, -1.570796012878418)), 'lskirt_b_01_wj': NoeVec3((-0.7853981852531433, -0.10471980273723602, -1.4486229419708252)), 'lskirt_c_01_wj': NoeVec3((-1.570796012878418, 0.0, -1.3089970350265503)), 
+    'lskirt_d_01_wj': NoeVec3((-2.3387410640716553, 0.1745329052209854, -1.3962630033493042)), 'lskirt_e_01_wj': NoeVec3((0.0, 2.8797929286956787, 1.570796012878418)), 'lskirt_f_01_wj': NoeVec3((2.3387410640716553, 0.1745329052209854, -1.7453290224075317)), 
+    'lskirt_g_01_wj': NoeVec3((1.570796012878418, 0.0, -1.832595944404602)), 'lskirt_h_01_wj': NoeVec3((0.7853981852531433, -0.10471980273723602, -1.6929689645767212)), 'skirt_a_01_wj': NoeVec3((0.0, -0.2094395011663437, -1.570796012878418)), 
+    'skirt_a_02_wj': NoeVec3((0.0, 0.10471980273723602, 0.0)), 'skirt_b_01_wj': NoeVec3((-0.593411922454834, -0.15707960724830627, -1.2566369771957397)), 'skirt_b_02_wj': NoeVec3((0.0, 0.06981316953897476, 0.0)), 
+    'skirt_c_01_wj': NoeVec3((-1.570796012878418, 0.09599310904741287, -1.1693710088729858)), 'skirt_c_02_wj': NoeVec3((0.0, 0.0872664600610733, 0.0)), 'skirt_d_01_wj': NoeVec3((-2.4434609413146973, 0.3665192127227783, -1.2566369771957397)), 
+    'skirt_d_02_wj': NoeVec3((0.0, 0.13962629437446594, 0.0)), 'skirt_e_01_wj': NoeVec3((0.0, 2.652899980545044, 1.570796012878418)), 'skirt_e_02_wj': NoeVec3((0.0, 0.15707960724830627, 0.0)), 'skirt_f_01_wj': NoeVec3((2.4434609413146973, 0.3665192127227783, -1.8849560022354126)), 
+    'skirt_f_02_wj': NoeVec3((0.0, 0.13962629437446594, 0.0)), 'skirt_g_01_wj': NoeVec3((1.570796012878418, 0.09599310904741287, -1.9722219705581665)), 'skirt_g_02_wj': NoeVec3((0.0, 0.0872664600610733, 0.0)), 
+    'skirt_h_01_wj': NoeVec3((0.593411922454834, -0.15707960724830627, -1.8849560022354126)), 'skirt_h_02_wj': NoeVec3((0.0, 0.06981316953897476, 0.0)), 'spine_wj': NoeVec3((0.0, 0.0, 1.570796012878418)), 'breast_c_wj': NoeVec3((0.0, 3.1415929794311523, 0.0)), 
+    'breast_l_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 'breast_r_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 'face_root': NoeVec3((0.0, 0.01745329052209854, 0.0)), 'hair_chara_root': NoeVec3((-0.01745329052209854, 0.0, -1.570796012878418)), 
+    'hairside_l_01_wj': NoeVec3((-0.3490658104419708, 0.27925270795822144, -1.0471980571746826)), 'hairside_l_02_wj': NoeVec3((0.0, 0.0, -0.2967059910297394)), 'hairside_l_03_wj': NoeVec3((0.0, 0.0, -0.0872664600610733)), 'hairside_l_04_wj': NoeVec3((0.0, 0.0, -0.10471980273723602)), 
+    'hairside_l_05_wj': NoeVec3((0.0, 0.0, -0.06981316953897476)), 'hairside_l_06_wj': NoeVec3((0.0, 0.0, -0.06981316953897476)), 'hairside_r_01_wj': NoeVec3((0.3490658104419708, 0.27925270795822144, -2.0943949222564697)), 'hairside_r_02_wj': NoeVec3((0.0, 0.0, 0.2967059910297394)), 
+    'hairside_r_03_wj': NoeVec3((0.0, 0.0, 0.0872664600610733)), 'hairside_r_04_wj': NoeVec3((0.0, 0.0, 0.10471980273723602)), 'hairside_r_05_wj': NoeVec3((0.0, 0.0, 0.06981316953897476)), 'hairside_r_06_wj': NoeVec3((0.0, 0.0, 0.06981316953897476)), 
+    'hair_root': NoeVec3((-0.03490658104419708, 0.0, -1.570796012878418)), 'hairback_c_01_wj': NoeVec3((0.0, 3.054326057434082, 1.570796012878418)), 'hairback_c_02_wj': NoeVec3((0.0, -0.1745329052209854, 0.0)), 'hairback_c_03_wj': NoeVec3((0.0, 0.0872664600610733, 0.0)), 
+    'hairback_c_04_wj': NoeVec3((0.0, 0.15707960724830627, 0.0)), 'hairback_l_01_wj': NoeVec3((-2.495820999145508, 0.2094395011663437, -1.4311699867248535)), 'hairback_l_02_wj': NoeVec3((0.0, -0.0872664600610733, 0.0)), 
+    'hairback_l_03_wj': NoeVec3((0.0, 0.0872664600610733, 0.0872664600610733)), 'hairback_l_04_wj': NoeVec3((0.0, 0.3490658104419708, 0.0)), 'hairback_r_01_wj': NoeVec3((2.495820999145508, 0.2094395011663437, -1.7104229927062988)), 
+    'hairback_r_02_wj': NoeVec3((0.0, -0.0872664600610733, 0.0)), 'hairback_r_03_wj': NoeVec3((0.0, 0.0872664600610733, -0.0872664600610733)), 'hairback_r_04_wj': NoeVec3((0.0, 0.3490658104419708, 0.0))}, 
+    'ARI': {'lskirt_a_01_wj': NoeVec3((0.0, -0.0872664600610733, -1.570796012878418)), 'lskirt_b_01_wj': NoeVec3((-0.7853981852531433, -0.10471980273723602, -1.4486229419708252)), 'lskirt_c_01_wj': NoeVec3((-1.570796012878418, 0.0, -1.3089970350265503)), 
+    'lskirt_d_01_wj': NoeVec3((-2.3387410640716553, 0.1745329052209854, -1.3962630033493042)), 'lskirt_e_01_wj': NoeVec3((0.0, 2.8797929286956787, 1.570796012878418)), 'lskirt_f_01_wj': NoeVec3((2.3387410640716553, 0.1745329052209854, -1.7453290224075317)), 
+    'lskirt_g_01_wj': NoeVec3((1.570796012878418, 0.0, -1.832595944404602)), 'lskirt_h_01_wj': NoeVec3((0.7853981852531433, -0.10471980273723602, -1.6929689645767212)), 'skirt_a_01_wj': NoeVec3((0.0, -0.18325960636138916, -1.570796012878418)), 
+    'skirt_a_02_wj': NoeVec3((0.0, 0.024434609338641167, 0.0)), 'skirt_b_01_wj': NoeVec3((-0.7853981852531433, -0.08028514683246613, -1.1693710088729858)), 'skirt_b_02_wj': NoeVec3((0.0, 0.05235987901687622, -0.0872664600610733)), 
+    'skirt_c_01_wj': NoeVec3((-1.570796012878418, 0.13089969754219055, -1.0471980571746826)), 'skirt_c_02_wj': NoeVec3((0.0, 0.0872664600610733, 0.0)), 'skirt_d_01_wj': NoeVec3((-2.268928050994873, 0.3141593039035797, -1.2042770385742188)), 
+    'skirt_d_02_wj': NoeVec3((0.0, 0.0872664600610733, 0.0)), 'skirt_e_01_wj': NoeVec3((0.0, 2.792526960372925, 1.570796012878418)), 'skirt_e_02_wj': NoeVec3((0.0, 0.022689279168844223, 0.0)), 
+    'skirt_f_01_wj': NoeVec3((2.268928050994873, 0.3141593039035797, -1.9373149871826172)), 'skirt_f_02_wj': NoeVec3((0.0, 0.0872664600610733, 0.0)), 'skirt_g_01_wj': NoeVec3((1.570796012878418, 0.13089969754219055, -2.0943949222564697)), 
+    'skirt_g_02_wj': NoeVec3((0.0, 0.0872664600610733, 0.0)), 'skirt_h_01_wj': NoeVec3((0.7853981852531433, -0.08028514683246613, -1.9722219705581665)), 'skirt_h_02_wj': NoeVec3((0.0, 0.05235987901687622, 0.0872664600610733)), 'spine_wj': NoeVec3((0.0, 0.0, 1.570796012878418)), 
+    'breast_c_wj': NoeVec3((0.0, 3.1415929794311523, 0.0)), 'breast_l_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 'breast_r_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 'face_root': NoeVec3((0.0, 0.01745329052209854, 0.0)), 
+    'hair_chara_root': NoeVec3((-0.01745329052209854, 0.0, -1.570796012878418)), 'hair_c_01_wj': NoeVec3((0.0, 0.03490658104419708, -1.570796012878418)), 'hair_l_01_wj': NoeVec3((-0.7853981852531433, 0.01745329052209854, -1.570796012878418)), 
+    'hair_r_01_wj': NoeVec3((0.7853981852531433, 0.01745329052209854, -1.570796012878418)), 'hairside_l_01_wj': NoeVec3((0.0, -0.1221729964017868, -1.570796012878418)), 'hairside_l_02_wj': NoeVec3((0.0, -0.1745329052209854, 0.10471980273723602)), 
+    'hairside_l_03_wj': NoeVec3((0.0, -0.01745329052209854, 0.06981316953897476)), 'hairside_l_04_wj': NoeVec3((0.0, 0.13962629437446594, 0.0)), 'hairside_l_05_wj': NoeVec3((0.0, 0.22689279913902283, -0.2967059910297394)), 
+    'hairside_r_01_wj': NoeVec3((0.0, -0.1221729964017868, -1.570796012878418)), 'hairside_r_02_wj': NoeVec3((0.0, -0.1745329052209854, -0.10471980273723602)), 'hairside_r_03_wj': NoeVec3((0.0, -0.01745329052209854, -0.06981316953897476)), 
+    'hairside_r_04_wj': NoeVec3((0.0, 0.13962629437446594, 0.0)), 'hairside_r_05_wj': NoeVec3((0.0, 0.22689279913902283, 0.2967059910297394)), 'hair_root': NoeVec3((-0.03490658104419708, 0.0, -1.570796012878418)), 
+    'hairback_c_01_wj': NoeVec3((0.0, 3.054326057434082, 1.570796012878418)), 'hairback_c_02_wj': NoeVec3((0.0, -0.1745329052209854, 0.0)), 'hairback_c_03_wj': NoeVec3((0.0, 0.0872664600610733, 0.0)), 'hairback_c_04_wj': NoeVec3((0.0, 0.15707960724830627, 0.0)), 
+    'hairback_l_01_wj': NoeVec3((-2.495820999145508, 0.2094395011663437, -1.4311699867248535)), 'hairback_l_02_wj': NoeVec3((0.0, -0.0872664600610733, 0.0)), 'hairback_l_03_wj': NoeVec3((0.0, 0.0872664600610733, 0.0872664600610733)), 
+    'hairback_l_04_wj': NoeVec3((0.0, 0.3490658104419708, 0.0)), 'hairback_r_01_wj': NoeVec3((2.495820999145508, 0.2094395011663437, -1.7104229927062988)), 'hairback_r_02_wj': NoeVec3((0.0, -0.0872664600610733, 0.0)), 
+    'hairback_r_03_wj': NoeVec3((0.0, 0.0872664600610733, -0.0872664600610733)), 'hairback_r_04_wj': NoeVec3((0.0, 0.3490658104419708, 0.0))}, 
+    'ART': {'lskirt_a_01_wj': NoeVec3((0.0, -0.0872664600610733, -1.570796012878418)), 'lskirt_b_01_wj': NoeVec3((-0.7853981852531433, -0.10471980273723602, -1.4486229419708252)), 'lskirt_c_01_wj': NoeVec3((-1.570796012878418, 0.0, -1.3089970350265503)), 
+    'lskirt_d_01_wj': NoeVec3((-2.3387410640716553, 0.1745329052209854, -1.3962630033493042)), 'lskirt_e_01_wj': NoeVec3((0.0, 2.8797929286956787, 1.570796012878418)), 'lskirt_f_01_wj': NoeVec3((2.3387410640716553, 0.1745329052209854, -1.7453290224075317)), 
+    'lskirt_g_01_wj': NoeVec3((1.570796012878418, 0.0, -1.832595944404602)), 'lskirt_h_01_wj': NoeVec3((0.7853981852531433, -0.10471980273723602, -1.6929689645767212)), 'skirt_a_01_wj': NoeVec3((0.0, -0.0872664600610733, -1.570796012878418)), 
+    'skirt_a_02_wj': NoeVec3((0.0, 0.03490658104419708, 0.0)), 'skirt_b_01_wj': NoeVec3((-0.9599310755729675, 0.0, -1.326449990272522)), 'skirt_b_02_wj': NoeVec3((0.0, -0.03490658104419708, 0.0)), 'skirt_c_01_wj': NoeVec3((-1.570796012878418, 0.0872664600610733, -1.291543960571289)), 
+    'skirt_c_02_wj': NoeVec3((0.0, -0.0872664600610733, 0.0)), 'skirt_d_01_wj': NoeVec3((-2.268928050994873, 0.2967059910297394, -1.3613569736480713)), 'skirt_d_02_wj': NoeVec3((0.0, 0.06981316953897476, 0.0)), 'skirt_e_01_wj': NoeVec3((0.0, 2.8274331092834473, 1.570796012878418)), 
+    'skirt_e_02_wj': NoeVec3((0.0, 0.05235987901687622, 0.0)), 'skirt_f_01_wj': NoeVec3((2.268928050994873, 0.2967059910297394, -1.780236005783081)), 'skirt_f_02_wj': NoeVec3((0.0, 0.06981316953897476, 0.0)), 
+    'skirt_g_01_wj': NoeVec3((1.570796012878418, 0.0872664600610733, -1.8500490188598633)), 'skirt_g_02_wj': NoeVec3((0.0, -0.0872664600610733, 0.0)), 'skirt_h_01_wj': NoeVec3((0.9599310755729675, 0.0, -1.815142035484314)), 'skirt_h_02_wj': NoeVec3((0.0, -0.03490658104419708, 0.0)), 
+    'spine_wj': NoeVec3((0.0, 0.0, 1.570796012878418)), 'breast_c_wj': NoeVec3((0.0, 3.1415929794311523, 0.0)), 'breast_l_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 'breast_r_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 
+    'face_root': NoeVec3((0.0, 0.01745329052209854, 0.0)), 'hair_chara_root': NoeVec3((-0.01745329052209854, 0.0, -1.570796012878418)), 'hair_l_01_wj': NoeVec3((-0.13962629437446594, 0.2617993950843811, -2.268928050994873)), 
+    'hair_ponytail_01_wj': NoeVec3((0.0, 0.3839724063873291, -1.570796012878418)), 'hair_ponytail_02_wj': NoeVec3((0.0, -0.2967059910297394, 0.0)), 'hair_ponytail_03_wj': NoeVec3((0.0, -0.06981316953897476, 0.0)), 'hair_ponytail_04_wj': NoeVec3((0.0, -0.13962629437446594, 0.0)), 
+    'hair_ponytail_05_wj': NoeVec3((0.0, -0.1745329052209854, 0.0)), 'hair_r_01_wj': NoeVec3((-0.3490658104419708, 0.0872664600610733, -2.0420351028442383)), 'hairside_l_01_wj': NoeVec3((0.0, -0.0872664600610733, -1.6057029962539673)), 
+    'hairside_l_02_wj': NoeVec3((0.0, -0.4188790023326874, 0.19198620319366455)), 'hairside_l_03_wj': NoeVec3((0.0, 0.3490658104419708, 0.05235987901687622)), 'hairside_l_04_wj': NoeVec3((0.0, 0.1745329052209854, -0.1745329052209854)), 
+    'hairside_l_05_wj': NoeVec3((0.0, 0.13962629437446594, -0.13962629437446594)), 'hairside_r_01_wj': NoeVec3((0.0, -0.0872664600610733, -1.535889983177185)), 'hairside_r_02_wj': NoeVec3((0.0, -0.4188790023326874, -0.19198620319366455)), 
+    'hairside_r_03_wj': NoeVec3((0.0, 0.3490658104419708, -0.05235987901687622)), 'hairside_r_04_wj': NoeVec3((0.0, 0.1745329052209854, 0.1745329052209854)), 'hairside_r_05_wj': NoeVec3((0.0, 0.13962629437446594, 0.13962629437446594)), 
+    'hair_root': NoeVec3((-0.03490658104419708, 0.0, -1.570796012878418)), 'hairback_c_01_wj': NoeVec3((0.0, 3.054326057434082, 1.570796012878418)), 'hairback_c_02_wj': NoeVec3((0.0, -0.1745329052209854, 0.0)), 'hairback_c_03_wj': NoeVec3((0.0, 0.0872664600610733, 0.0)), 
+    'hairback_c_04_wj': NoeVec3((0.0, 0.15707960724830627, 0.0)), 'hairback_l_01_wj': NoeVec3((-2.495820999145508, 0.2094395011663437, -1.4311699867248535)), 'hairback_l_02_wj': NoeVec3((0.0, -0.0872664600610733, 0.0)), 'hairback_l_03_wj': NoeVec3((0.0, 0.0872664600610733, 0.0872664600610733)), 
+    'hairback_l_04_wj': NoeVec3((0.0, 0.3490658104419708, 0.0)), 'hairback_r_01_wj': NoeVec3((2.495820999145508, 0.2094395011663437, -1.7104229927062988)), 'hairback_r_02_wj': NoeVec3((0.0, -0.0872664600610733, 0.0)), 'hairback_r_03_wj': NoeVec3((0.0, 0.0872664600610733, -0.0872664600610733)), 
+    'hairback_r_04_wj': NoeVec3((0.0, 0.3490658104419708, 0.0))},
+    'G5A': {'lskirt_a_01_wj': NoeVec3((0.0, -0.0872664600610733, -1.570796012878418)), 'lskirt_b_01_wj': NoeVec3((-0.7853981852531433, -0.10471980273723602, -1.4486229419708252)), 'lskirt_c_01_wj': NoeVec3((-1.570796012878418, 0.0, -1.3089970350265503)), 
+    'lskirt_d_01_wj': NoeVec3((-2.3387410640716553, 0.1745329052209854, -1.3962630033493042)), 'lskirt_e_01_wj': NoeVec3((0.0, 2.8797929286956787, 1.570796012878418)), 'lskirt_f_01_wj': NoeVec3((2.3387410640716553, 0.1745329052209854, -1.7453290224075317)), 
+    'lskirt_g_01_wj': NoeVec3((1.570796012878418, 0.0, -1.832595944404602)), 'lskirt_h_01_wj': NoeVec3((0.7853981852531433, -0.10471980273723602, -1.6929689645767212)), 'skirt_a_01_wj': NoeVec3((-4.768378971675702e-07, -0.028681350871920586, -1.570796012878418)), 
+    'skirt_b_01_wj': NoeVec3((-0.6454681158065796, -0.0037875559646636248, -1.2750450372695923)), 'skirt_b_02_wj': NoeVec3((-0.0026594980154186487, 0.10391999781131744, -0.05169770121574402)), 'skirt_c_01_wj': NoeVec3((-1.5124499797821045, 0.2100415974855423, -1.1360629796981812)), 
+    'skirt_c_02_wj': NoeVec3((0.0, 0.1745329052209854, -0.0872664600610733)), 'skirt_d_01_wj': NoeVec3((-2.4197421073913574, 0.5604689121246338, -1.2464569807052612)), 'skirt_d_02_wj': NoeVec3((-4.768378857988864e-06, 0.3490658104419708, -0.03490832820534706)), 
+    'skirt_e_01_wj': NoeVec3((4.768378971675702e-07, 2.5172879695892334, 1.570796012878418)), 'skirt_e_02_wj': NoeVec3((0.0, 0.3023433983325958, 0.0)), 'skirt_f_01_wj': NoeVec3((2.4197421073913574, 0.5604689121246338, -1.89513099193573)), 
+    'skirt_f_02_wj': NoeVec3((5.858948043169221e-06, 0.3490658104419708, 0.03490832820534706)), 'skirt_g_01_wj': NoeVec3((1.5124499797821045, 0.2100415974855423, -2.0055229663848877)), 'skirt_g_02_wj': NoeVec3((0.0, 0.1745329052209854, 0.08726593852043152)), 
+    'skirt_h_01_wj': NoeVec3((0.6454681158065796, -0.0037872770335525274, -1.8665419816970825)), 'skirt_h_02_wj': NoeVec3((0.0026589040644466877, 0.10392089933156967, 0.05169770121574402)), 'spine_wj': NoeVec3((0.0, -0.19305090606212616, 1.5702730417251587)), 
+    'breast_c_wj': NoeVec3((0.0, 3.1415929794311523, 0.0)), 'breast_l_wj': NoeVec3((-0.001871446962468326, -1.344391942024231, -3.1415929794311523)), 'breast_r_wj': NoeVec3((-0.001871446962468326, -1.344391942024231, -3.1415929794311523)), 
+    'face_root': NoeVec3((-0.0007658819085918367, -0.17080259323120117, 0.004495671018958092)), 'hair_chara_root': NoeVec3((-0.0007683131261728704, -0.1882563978433609, 0.004509266931563616)), 'hairaccessories_a_01_wj': NoeVec3((6.946217763470486e-05, -0.05494314059615135, 3.137578010559082)), 
+    'hairaccessories_a_02_wj': NoeVec3((0.0, -0.003193953074514866, 0.0)), 'hairaccessories_b_01_wj': NoeVec3((6.946217763470486e-05, -0.05494314059615135, 3.137578010559082)), 'hairaccessories_b_02_wj': NoeVec3((-1.7453290638513863e-05, -0.0006108651868999004, -0.00043633230961859226)), 
+    'hairaho_01_wj': NoeVec3((-0.019633209332823753, -0.48825061321258545, -1.6760799884796143)), 'hairaho_02_wj': NoeVec3((0.0, 0.0, -0.6356313824653625)), 'hairfront_a_01_wj': NoeVec3((0.008380337618291378, -0.1310953050851822, 2.6446969509124756)), 
+    'hairfront_b_01_wj': NoeVec3((0.011147580109536648, -0.17975670099258423, 2.459588050842285)), 'hairfront_b_02_wj': NoeVec3((-0.04257626086473465, 0.6271054744720459, -0.23209740221500397)), 'hairside_l_01_wj': NoeVec3((-0.0017048110021278262, 0.00916739460080862, -3.0441160202026367)), 
+    'hairside_l_02_wj': NoeVec3((0.0104370703920722, 0.02666863054037094, -0.4035550057888031)), 'hairside_r_01_wj': NoeVec3((0.002109142951667309, 0.0061197178438305855, 3.020134925842285)), 'hairside_r_02_wj': NoeVec3((-0.010175270028412342, 0.0316777303814888, 0.4481481909751892)), 
+    'hair_root': NoeVec3((0.15334460139274597, -0.0007504916284233332, -1.5664160251617432)), 'hairback_c_01_wj': NoeVec3((0.0059515731409192085, 3.106215000152588, 1.5708839893341064)), 'hairback_c_02_wj': NoeVec3((-0.027174780145287514, -0.05347688868641853, 0.0019373149843886495)), 
+    'hairback_c_03_wj': NoeVec3((0.09208357334136963, -0.023247789591550827, -0.00874409917742014)), 'hairback_c_04_wj': NoeVec3((-0.10304419696331024, -0.09009390324354172, 0.019128810614347458)), 'hairback_l_01_wj': NoeVec3((-1.592421054840088, 0.01846558041870594, -1.5254000425338745)), 
+    'hairback_l_02_wj': NoeVec3((-0.2920460104942322, -0.05499532073736191, 0.03015929087996483)), 'hairback_l_03_wj': NoeVec3((-0.06455972790718079, -0.05431465059518814, 0.010297439992427826)), 'hairback_l_04_wj': NoeVec3((0.002495785942301154, -0.22535690665245056, -0.0009599223849363625)), 
+    'hairback_r_01_wj': NoeVec3((1.5924040079116821, 0.01846558041870594, -1.6162270307540894)), 'hairback_r_02_wj': NoeVec3((0.2920284867286682, -0.05499532073736191, -0.03015929087996483)), 'hairback_r_03_wj': NoeVec3((0.07162830978631973, -0.056670840829610825, -0.01160643994808197)), 
+    'hairback_r_04_wj': NoeVec3((-0.009895982220768929, -0.22533950209617615, 0.0037873650435358286))}, 
+    'G5K': {'lskirt_a_01_wj': NoeVec3((0.0, 0.0024434609804302454, -1.570796012878418)), 'lskirt_a_02_wj': NoeVec3((0.0, 0.036023590713739395, 0.0)), 'lskirt_a_03_wj': NoeVec3((0.0, -0.0037175510078668594, 0.0)), 'lskirt_b_01_wj': NoeVec3((-0.5795888900756836, 0.06609562039375305, -1.470229983329773)), 
+    'lskirt_b_02_wj': NoeVec3((0.0, -0.013369220308959484, -0.11309730261564255)), 'lskirt_b_03_wj': NoeVec3((0.0, -0.01160643994808197, 0.005637412890791893)), 'lskirt_c_01_wj': NoeVec3((-2.214858055114746, 0.13821260631084442, -1.389333963394165)), 
+    'lskirt_c_02_wj': NoeVec3((0.3770608901977539, 0.1739221066236496, -0.021851519122719765)), 'lskirt_c_03_wj': NoeVec3((0.11107280105352402, 0.005742133129388094, -0.005811946000903845)), 'lskirt_d_01_wj': NoeVec3((-2.6118149757385254, 0.38095301389694214, -1.3564180135726929)), 
+    'lskirt_d_02_wj': NoeVec3((0.4991990923881531, 0.39248961210250854, -0.025342179462313652)), 'lskirt_d_03_wj': NoeVec3((-0.00031415928970091045, -1.7453290638513863e-05, 1.7453290638513863e-05)), 'lskirt_e_01_wj': NoeVec3((0.0, 2.668555974960327, 1.570796012878418)), 
+    'lskirt_e_02_wj': NoeVec3((0.0, 0.39360669255256653, 0.0)), 'lskirt_e_03_wj': NoeVec3((0.0, 0.05464626103639603, 0.0)), 'lskirt_f_01_wj': NoeVec3((2.6118500232696533, 0.38091808557510376, -1.785140037536621)), 'lskirt_f_02_wj': NoeVec3((-0.499460905790329, 0.39247220754623413, 0.025342179462313652)), 
+    'lskirt_f_03_wj': NoeVec3((0.0008377581252716482, -5.2359879191499203e-05, -3.4906581277027726e-05)), 'lskirt_g_01_wj': NoeVec3((1.570796012878418, 0.13821260631084442, -1.7522579431533813)), 'lskirt_g_02_wj': NoeVec3((-0.001989674987271428, 0.1258208006620407, 0.12234760075807571)), 
+    'lskirt_g_03_wj': NoeVec3((-3.4906581277027726e-05, 0.003944444004446268, 0.007190756034106016)), 'lskirt_h_01_wj': NoeVec3((1.570796012878418, 0.06607816368341446, -1.6713800430297852)), 'lskirt_h_02_wj': NoeVec3((0.00062831852119416, 0.08724901080131531, 0.07332128286361694)), 
+    'lskirt_h_03_wj': NoeVec3((-0.00010471980203874409, -0.005672319792211056, 0.01162389013916254)), 'skirt_a_01_wj': NoeVec3((-4.768378971675702e-07, -0.11449480056762695, -1.570796012878418)), 'skirt_a_02_wj': NoeVec3((1.6021900250962062e-07, 0.06923965364694595, 0.0)), 
+    'skirt_b_01_wj': NoeVec3((-0.6457229256629944, -0.02627227082848549, -1.2581080198287964)), 'skirt_b_02_wj': NoeVec3((-0.0026564609725028276, 0.1010081022977829, -0.051676228642463684)), 'skirt_c_01_wj': NoeVec3((-1.514515995979309, 0.2100888043642044, -1.1459189653396606)), 
+    'skirt_c_02_wj': NoeVec3((0.0036839889362454414, 0.1868060976266861, -0.0872664600610733)), 'skirt_d_01_wj': NoeVec3((-2.4318718910217285, 0.5383433103561401, -1.2696939706802368)), 'skirt_d_02_wj': NoeVec3((-0.00015830989286769181, 0.2807047963142395, -0.035501569509506226)), 
+    'skirt_e_01_wj': NoeVec3((3.1415929794311523, 0.6243042945861816, -1.570796012878418)), 'skirt_e_02_wj': NoeVec3((-4.768378971675702e-07, 0.3023433983325958, 0.0)), 'skirt_f_01_wj': NoeVec3((2.4318718910217285, 0.5383433103561401, -1.871901035308838)), 
+    'skirt_f_02_wj': NoeVec3((0.0001597202935954556, 0.28070300817489624, 0.03550191968679428)), 'skirt_g_01_wj': NoeVec3((1.514515995979309, 0.21008700132369995, -1.995661973953247)), 'skirt_g_02_wj': NoeVec3((-0.003684530034661293, 0.18507120013237, 0.08726576715707779)), 
+    'skirt_h_01_wj': NoeVec3((0.6457229256629944, -0.026272090151906013, -1.883471965789795)), 'skirt_h_02_wj': NoeVec3((0.002657559933140874, 0.10100830346345901, 0.051676228642463684)), 'spine_wj': NoeVec3((0.0, -0.19305090606212616, 1.570796012878418)), 
+    'breast_c_wj': NoeVec3((0.0, 3.1415929794311523, 0.0)), 'breast_l_wj': NoeVec3((-4.3441590946713404e-07, -1.3443750143051147, -3.1415929794311523)), 'breast_r_wj': NoeVec3((-4.3441590946713404e-07, -1.3443750143051147, -3.1415929794311523)), 'face_root': NoeVec3((0.0, 0.0, 1.0552030005328561e-07)), 
+    'eye_root': NoeVec3((0.0, 0.00027792449691332877, 0.0)), 'hair_chara_root': NoeVec3((-0.00027792449691332877, 1.7094630493375007e-06, -1.570796012878418)), 'hair_b_l_01_wj': NoeVec3((0.0003137683088425547, 0.8886867761611938, -0.7333176136016846)), 
+    'hair_b_r_01_wj': NoeVec3((-0.0001917139015858993, 0.6384589076042175, -2.17455792427063)), 'hair_c_01_wj': NoeVec3((0.00010471590212546289, 0.011466809548437595, -1.1543430089950562)), 'hair_l_01_wj': NoeVec3((0.0001743579050526023, 0.39210569858551025, -0.9351997971534729)), 
+    'hair_l_side_01_wj': NoeVec3((-8.725267252884805e-05, 0.05216788873076439, -1.8722319602966309)), 'hair_l_side_02_wj': NoeVec3((0.006335493177175522, -0.1540950983762741, -0.12170179933309555)), 'hair_r_01_wj': NoeVec3((-3.491356983431615e-05, -0.07051129639148712, -1.6766159534454346)), 
+    'hair_r_side_01_wj': NoeVec3((6.980654143262655e-05, 0.03015929087996483, -1.322052001953125)), 'hair_r_side_02_wj': NoeVec3((-0.004275986924767494, -0.2010270059108734, 0.14161600172519684)), 'hair_root': NoeVec3((-0.00027792449691332877, 1.7094630493375007e-06, -1.570796012878418)), 
+    'hairback_c_01_wj': NoeVec3((0.022078419104218483, 2.87001895904541, 1.576712965965271)), 'hairback_c_02_wj': NoeVec3((0.0, 0.315189003944397, -0.007278022821992636)), 'hairback_c_03_wj': NoeVec3((-0.0001396235020365566, -0.005550147034227848, -0.020315630361437798)), 
+    'hairback_c_04_wj': NoeVec3((1.7453639884479344e-05, 0.004956734832376242, -0.020577430725097656)), 'hairback_l_01_wj': NoeVec3((-1.867885947227478, 0.0823795422911644, -1.3090840578079224)), 'hairback_l_02_wj': NoeVec3((0.0, 0.25021040439605713, 0.028850290924310684)), 
+    'hairback_l_03_wj': NoeVec3((0.0, 0.02958332933485508, 0.010175270028412342)), 'hairback_l_04_wj': NoeVec3((0.0, 0.01679006963968277, 0.008621926419436932)), 'hairback_r_01_wj': NoeVec3((1.9522379636764526, 0.1074075996875763, -1.8313390016555786)), 
+    'hairback_r_02_wj': NoeVec3((0.0, 0.24408429861068726, -0.044767700135707855)), 'hairback_r_03_wj': NoeVec3((0.0, 0.03132865950465202, -0.008063421584665775)), 'hairback_r_04_wj': NoeVec3((0.0, 0.017505649477243423, -0.009267698042094707))},
+    'G5M': {'lskirt_a_01_wj': NoeVec3((0.0, 0.0059166657738387585, -1.570796012878418)), 'lskirt_a_02_wj': NoeVec3((0.0, -0.0008726646192371845, 0.0)), 'lskirt_b_01_wj': NoeVec3((-0.11952020227909088, 0.023631760850548744, -1.376505970954895)), 
+    'lskirt_b_02_wj': NoeVec3((-0.03726277872920036, 0.007312930189073086, -0.00195476901717484)), 'lskirt_c_01_wj': NoeVec3((-1.9006459712982178, 0.14014990627765656, -1.183385968208313)), 'lskirt_c_02_wj': NoeVec3((-0.07440338283777237, 0.06363470107316971, 0.027663469314575195)), 
+    'lskirt_d_01_wj': NoeVec3((-2.5189640522003174, 0.3948458135128021, -1.3013520240783691)), 'lskirt_d_02_wj': NoeVec3((-0.05593780055642128, 0.11934559792280197, 0.021868979558348656)), 'lskirt_e_01_wj': NoeVec3((0.0, 2.626283884048462, 1.570796012878418)), 
+    'lskirt_e_02_wj': NoeVec3((0.0, 0.1131846010684967, 0.0)), 'lskirt_f_01_wj': NoeVec3((2.5174460411071777, 0.39646899700164795, -1.8420549631118774)), 'lskirt_f_02_wj': NoeVec3((0.05672319978475571, 0.12166690081357956, -0.022183140739798546)), 
+    'lskirt_g_01_wj': NoeVec3((1.9012049436569214, 0.14018480479717255, -1.957666039466858)), 'lskirt_g_02_wj': NoeVec3((0.07393214851617813, 0.06312856078147888, -0.027488939464092255)), 'lskirt_h_01_wj': NoeVec3((1.6903339624404907, 0.023631760850548744, -1.765086054801941)), 
+    'lskirt_h_02_wj': NoeVec3((0.03722786903381348, 0.00195476901717484, -0.007312930189073086)), 'skirt_a_01_wj': NoeVec3((3.028984110642341e-06, -0.028681350871920586, -1.570796012878418)), 'skirt_b_01_wj': NoeVec3((-0.6452500224113464, -0.011757849715650082, -1.295261025428772)), 
+    'skirt_b_02_wj': NoeVec3((-0.002659322926774621, 0.03544728830456734, 0.0)), 'skirt_c_01_wj': NoeVec3((-1.5119999647140503, 0.2049645036458969, -1.1345839500427246)), 'skirt_c_02_wj': NoeVec3((0.0241530891507864, 0.14758920669555664, -0.030548499897122383)), 
+    'skirt_d_01_wj': NoeVec3((-2.421173095703125, 0.5534247159957886, -1.2491999864578247)), 'skirt_d_02_wj': NoeVec3((0.0011977249523624778, 0.23975589871406555, -0.030189480632543564)), 'skirt_e_01_wj': NoeVec3((3.1415929794311523, 0.6397852897644043, -1.570796012878418)), 
+    'skirt_e_02_wj': NoeVec3((-9.536740890325746e-07, 0.244637593626976, 0.0)), 'skirt_f_01_wj': NoeVec3((2.421173095703125, 0.5534247159957886, -1.8923909664154053)), 'skirt_f_02_wj': NoeVec3((-0.0011963850120082498, 0.23975589871406555, 0.03018965944647789)), 
+    'skirt_g_01_wj': NoeVec3((1.5120010375976562, 0.2049645036458969, -2.0070059299468994)), 'skirt_g_02_wj': NoeVec3((-0.024154139682650566, 0.14758910238742828, 0.030549539253115654)), 'skirt_h_01_wj': NoeVec3((0.6452516913414001, -0.011757319793105125, -1.846331000328064)), 
+    'skirt_h_02_wj': NoeVec3((0.00265970709733665, 0.0354483388364315, 0.0)), 'spine_wj': NoeVec3((0.0, -0.24893629550933838, 1.5700629949569702)), 'breast_c_wj': NoeVec3((0.0, 3.1415929794311523, 0.0)), 'breast_l_wj': NoeVec3((0.0, -1.3962630033493042, 3.1415929794311523)), 
+    'breast_r_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 'hair_chara_root': NoeVec3((0.0, 0.0, -1.570796012878418)), 'hair_l_01_wj': NoeVec3((0.0, -0.10744249820709229, -1.3654580116271973)), 'hair_l_02_wj': NoeVec3((-0.04731588065624237, -0.030246559530496597, -0.4528082013130188)), 
+    'hair_l_03_wj': NoeVec3((-0.04029965028166771, -0.14814350008964539, -0.312204509973526)), 'hair_r_01_wj': NoeVec3((2.6660780906677246, -0.10744249820709229, -1.7761340141296387)), 'hair_r_02_wj': NoeVec3((0.008220500312745571, 0.22907449305057526, -0.3951948881149292)), 
+    'hair_r_03_wj': NoeVec3((0.03436553105711937, 0.2737025022506714, -0.211952805519104)), 'hairfront_l_01_wj': NoeVec3((0.0, -0.5876349210739136, -1.433351993560791)), 'hairfront_l_02_wj': NoeVec3((-0.012339480221271515, 0.5897293090820312, -0.022252950817346573)), 
+    'hairfront_l_03_wj': NoeVec3((1.7453290638513863e-05, 0.30087730288505554, -0.008587020449340343)), 'hairfront_r_01_wj': NoeVec3((0.0, -0.5876349210739136, -1.7082409858703613)), 'hairfront_r_02_wj': NoeVec3((0.012322019785642624, 0.5897293090820312, 0.022235490381717682)), 
+    'hairfront_r_03_wj': NoeVec3((-1.7453290638513863e-05, 0.30085989832878113, 0.008587020449340343)), 'hairside_l_01_wj': NoeVec3((0.0, -0.069673553109169, -1.9006110429763794)), 'hairside_l_02_wj': NoeVec3((0.001797689008526504, -0.20277230441570282, 0.024783670902252197)), 
+    'hairside_l_03_wj': NoeVec3((0.024836039170622826, -0.3222750127315521, 0.07655014097690582)), 'hairside_l_04_wj': NoeVec3((0.05291837826371193, 0.0008377581252716482, 0.07859216630458832)), 'hairside_r_01_wj': NoeVec3((0.0, -0.069673553109169, -1.2409809827804565)), 
+    'hairside_r_02_wj': NoeVec3((-0.001797689008526504, -0.20277230441570282, -0.024766219779849052)), 'hairside_r_03_wj': NoeVec3((-0.024836039170622826, -0.3222750127315521, -0.07656759768724442)), 'hairside_r_04_wj': NoeVec3((-0.05291837826371193, 0.0008377581252716482, -0.07859216630458832)), 
+    'hair_root': NoeVec3((0.0, 0.0, -1.570796012878418)), 'hairback_c_01_wj': NoeVec3((-3.087678909301758, 0.017941990867257118, -1.5698360204696655)), 'hairback_c_02_wj': NoeVec3((-0.06312856078147888, -0.05331981182098389, 0.004502948839217424)), 
+    'hairback_c_03_wj': NoeVec3((0.08906415104866028, -0.023369960486888885, -0.008482299745082855)), 'hairback_c_04_wj': NoeVec3((-0.09498082101345062, -0.05600761994719505, 0.01441641990095377)), 'hairback_l_01_wj': NoeVec3((-1.5933279991149902, 0.0010297440458089113, -1.5253829956054688)), 
+    'hairback_l_02_wj': NoeVec3((-0.29195868968963623, -0.05499532073736191, 0.03015929087996483)), 'hairback_l_03_wj': NoeVec3((-0.07159339636564255, -0.056670840829610825, 0.0115889897570014)), 'hairback_l_04_wj': NoeVec3((-0.031154129654169083, -0.06325074285268784, 0.007051129825413227)), 
+    'hairback_r_01_wj': NoeVec3((0.022514749318361282, 3.1405630111694336, 1.5253829956054688)), 'hairback_r_02_wj': NoeVec3((0.03729768097400665, -0.003839723998680711, 0.05691519007086754)), 'hairback_r_03_wj': NoeVec3((0.4660727083683014, -0.07742281258106232, 0.05017821118235588)), 
+    'hairback_r_04_wj': NoeVec3((-0.11140439659357071, 0.02546435035765171, 0.05291837826371193))}, 
+    'G5Y': {'lskirt_a_01_wj': NoeVec3((0.0, 0.005899212788790464, -1.570796012878418)), 'lskirt_a_02_wj': NoeVec3((0.0, -0.0008726646192371845, 0.0)), 'lskirt_b_01_wj': NoeVec3((-0.7935140132904053, 0.0008726646192371845, -1.5403579473495483)), 
+    'lskirt_b_02_wj': NoeVec3((-0.028605949133634567, 0.0218864306807518, 0.00568977277725935)), 'lskirt_c_01_wj': NoeVec3((-1.534703016281128, 0.14254100620746613, -1.3218599557876587)), 'lskirt_c_02_wj': NoeVec3((-0.03380703181028366, 0.21582740545272827, -0.13901549577713013)), 
+    'lskirt_d_01_wj': NoeVec3((-2.6669681072235107, 0.35445889830589294, -1.3943259716033936)), 'lskirt_d_02_wj': NoeVec3((0.4075517952442169, 0.3344050943851471, -0.028047440573573112)), 'lskirt_e_01_wj': NoeVec3((0.0, 2.6700220108032227, 1.570796012878418)), 
+    'lskirt_e_02_wj': NoeVec3((0.0, 0.37159809470176697, 0.0)), 'lskirt_e_03_wj': NoeVec3((0.0, 0.06400121748447418, 0.0)), 'lskirt_f_01_wj': NoeVec3((2.6670379638671875, 0.3544763922691345, -1.7472490072250366)), 'lskirt_f_02_wj': NoeVec3((-0.40748199820518494, 0.3344050943851471, 0.028047440573573112)), 
+    'lskirt_g_01_wj': NoeVec3((1.570796012878418, 0.1425585001707077, -1.8196979761123657)), 'lskirt_g_02_wj': NoeVec3((-0.00251327408477664, 0.22066199779510498, 0.1311091035604477)), 'lskirt_h_01_wj': NoeVec3((0.7853981852531433, 0.000855211284942925, -1.6012170314788818)), 
+    'lskirt_h_02_wj': NoeVec3((0.0, 0.021921329200267792, -0.005532694049179554)), 'skirt_a_01_wj': NoeVec3((1.120841943702544e-06, -0.028681350871920586, -1.570796012878418)), 'skirt_a_02_wj': NoeVec3((-6.19888578512473e-06, 0.04594649001955986, -4.768378971675702e-07)), 
+    'skirt_b_01_wj': NoeVec3((-0.6452500224113464, -0.011757849715650082, -1.295261025428772)), 'skirt_b_02_wj': NoeVec3((-0.0026588519103825092, 0.06449061632156372, 0.0)), 'skirt_c_01_wj': NoeVec3((-1.5119999647140503, 0.2049645036458969, -1.1345839500427246)), 
+    'skirt_c_02_wj': NoeVec3((0.0241530891507864, 0.14758920669555664, -0.030548499897122383)), 'skirt_d_01_wj': NoeVec3((-2.421173095703125, 0.5534247159957886, -1.2491999864578247)), 'skirt_d_02_wj': NoeVec3((0.0014882549876347184, 0.27352631092071533, -0.029043149203062057)), 
+    'skirt_e_01_wj': NoeVec3((2.3841889174036623e-07, 2.5018069744110107, 1.570796012878418)), 'skirt_e_02_wj': NoeVec3((-9.536740890325746e-07, 0.244637593626976, 0.0)), 'skirt_f_01_wj': NoeVec3((2.421173095703125, 0.5534247159957886, -1.8923909664154053)), 
+    'skirt_f_02_wj': NoeVec3((-0.0014863009564578533, 0.27352631092071533, 0.029043149203062057)), 'skirt_g_01_wj': NoeVec3((1.5120010375976562, 0.2049645036458969, -2.0070059299468994)), 'skirt_g_02_wj': NoeVec3((-0.024154139682650566, 0.14758910238742828, 0.030549539253115654)), 
+    'skirt_h_01_wj': NoeVec3((0.6452516913414001, -0.011757319793105125, -1.846331000328064)), 'skirt_h_02_wj': NoeVec3((0.002659427933394909, 0.06449130922555923, 0.0)), 'spine_wj': NoeVec3((0.0, -0.24893629550933838, 1.570796012878418)), 
+    'breast_c_wj': NoeVec3((0.0, 3.1415929794311523, 3.549353877474459e-08)), 'breast_l_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 'breast_r_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 'hair_chara_root': NoeVec3((0.0, 0.0, -1.570796012878418)), 
+    'hair_a_l_side_01_wj': NoeVec3((0.0, -0.33646461367607117, -1.967702031135559)), 'hair_a_r_side_01_wj': NoeVec3((0.0, -0.33485889434814453, -1.1958470344543457)), 'hair_b_l_side_01_wj': NoeVec3((0.0, -0.7013431191444397, -0.9386032223701477)), 
+    'hair_b_r_side_01_wj': NoeVec3((0.0, -0.7013257145881653, -2.202971935272217)), 'hair_c_01_wj': NoeVec3((0.0, 0.0, -1.570796012878418)), 'hair_l_01_wj': NoeVec3((0.0, 0.12891000509262085, -1.2407200336456299)), 'hair_r_01_wj': NoeVec3((0.0, 0.13465219736099243, -1.8045660257339478)), 
+    'hair_root': NoeVec3((0.0, 0.0, -1.570796012878418)), 'hairback_c_01_wj': NoeVec3((3.1415929794311523, -0.23198920488357544, -1.6387590169906616)), 'hairback_c_02_wj': NoeVec3((0.0, -0.17575469613075256, -0.06892304867506027)), 'hairback_c_03_wj': NoeVec3((0.0, -0.0521329902112484, -0.0008203046745620668)), 
+    'hairback_c_04_wj': NoeVec3((0.0, -0.029705500230193138, -0.00047123889089562)), 'hairback_l_01_wj': NoeVec3((-2.356194019317627, -0.009843656793236732, -1.5854220390319824)), 'hairback_l_02_wj': NoeVec3((0.06354743987321854, 0.35243430733680725, 0.3183828890323639)), 
+    'hairback_l_03_wj': NoeVec3((0.0, -0.4770508110523224, -0.4314629137516022)), 'hairback_l_04_wj': NoeVec3((0.0, -0.010716320015490055, -0.010733770206570625)), 'hairback_r_01_wj': NoeVec3((2.356194019317627, -0.010681410320103168, -1.5031650066375732)), 
+    'hairback_r_02_wj': NoeVec3((-0.052499499171972275, 0.2877523899078369, -0.2514669895172119)), 'hairback_r_03_wj': NoeVec3((0.0, -0.4533666968345642, 0.39817941188812256)), 'hairback_r_04_wj': NoeVec3((0.0, -1.7453290638513863e-05, -1.7453290638513863e-05))}, 
+    'GCC': {'lskirt_a_01_wj': NoeVec3((0.0, -0.013919070363044739, -1.570796012878418)), 'lskirt_b_01_wj': NoeVec3((-0.7799859046936035, -0.04340285062789917, -1.4525049924850464)), 'lskirt_c_01_wj': NoeVec3((-1.570796012878418, 0.040142569690942764, -1.3065530061721802)), 
+    'lskirt_d_01_wj': NoeVec3((-2.328356981277466, 0.22371980547904968, -1.343775987625122)), 'lskirt_e_01_wj': NoeVec3((0.0, 2.825547933578491, 1.570796012878418)), 'lskirt_f_01_wj': NoeVec3((2.328356981277466, 0.22371980547904968, -1.7978110313415527)), 
+    'lskirt_g_01_wj': NoeVec3((1.570796012878418, 0.040142569690942764, -1.8350390195846558)), 'lskirt_h_01_wj': NoeVec3((0.7799859046936035, -0.04340285062789917, -1.689087986946106)), 'skirt_a_01_wj': NoeVec3((0.0, -0.0872664600610733, -1.570796012878418)), 
+    'skirt_b_01_wj': NoeVec3((-0.7853981852531433, -0.10471980273723602, -1.4660769701004028)), 'skirt_c_01_wj': NoeVec3((-1.570796012878418, 0.0, -1.3089970350265503)), 'skirt_c_02_wj': NoeVec3((0.0, 0.0872664600610733, 0.0)), 
+    'skirt_d_01_wj': NoeVec3((-2.3387410640716553, 0.1745329052209854, -1.3962630033493042)), 'skirt_e_01_wj': NoeVec3((0.0, 2.8797929286956787, 1.570796012878418)), 'skirt_f_01_wj': NoeVec3((2.3387410640716553, 0.1745329052209854, -1.7453290224075317)), 
+    'skirt_g_01_wj': NoeVec3((1.570796012878418, 0.0, -1.832595944404602)), 'skirt_g_02_wj': NoeVec3((0.0, 0.0872664600610733, 0.0)), 'skirt_h_01_wj': NoeVec3((0.7853981852531433, -0.10471980273723602, -1.6755160093307495)), 'spine_wj': NoeVec3((0.0, 0.0, 1.570796012878418)), 
+    'ribbon_chara_root': NoeVec3((0.0, 0.0, -1.570796012878418)), 'ribbon_l_01_wj': NoeVec3((0.0, 2.727268934249878, 1.7142620086669922)), 'ribbon_r_01_wj': NoeVec3((0.0, 2.727268934249878, 1.4273300170898438)), 'ribbonring_l_01_wj': NoeVec3((-2.9382619857788086, 0.3464479148387909, -1.0250320434570312)), 
+    'ribbonring_r_01_wj': NoeVec3((2.9382619857788086, 0.3464479148387909, -2.116560935974121)), 'face_root': NoeVec3((0.0, 0.01745329052209854, 0.0)), 'hair_chara_root': NoeVec3((-0.01745329052209854, 0.0, -1.570796012878418)), 'hair_c_01_wj': NoeVec3((0.0, -0.0872664600610733, -1.570796012878418)), 
+    'hair_l_01_wj': NoeVec3((0.0, 0.10983359813690186, -1.4872299432754517)), 'hair_l_02_wj': NoeVec3((0.038693949580192566, -0.20493659377098083, -0.3588047921657562)), 'hair_r_01_wj': NoeVec3((0.0, 0.13754940032958984, -1.6441349983215332)), 
+    'hairside_l_01_wj': NoeVec3((0.0, -0.615769624710083, -1.8749899864196777)), 'hairside_r_01_wj': NoeVec3((0.0, -0.10473719984292984, -1.3647600412368774)), 'hairside_r_02_wj': NoeVec3((-0.00015707960119470954, -0.08628907799720764, -0.0015358900418505073)), 
+    'hair_root': NoeVec3((-0.03490658104419708, 0.0, -1.570796012878418)), 'hairback_c_01_wj': NoeVec3((3.1415929794311523, -0.4689874053001404, -1.570796012878418)), 'hairback_c_02_wj': NoeVec3((0.0, -0.5562539100646973, 0.0)), 
+    'hairback_l_01_wj': NoeVec3((-2.482556104660034, -0.256912499666214, -1.7896610498428345)), 'hairback_l_02_wj': NoeVec3((0.0, -0.4893204867839813, 0.0)), 'hairback_r_01_wj': NoeVec3((2.482556104660034, -0.256912499666214, -1.3519320487976074)), 'hairback_r_02_wj': NoeVec3((0.0, -0.4893204867839813, 0.0))},
+    'GCG': {'lskirt_a_01_wj': NoeVec3((0.0, -0.0872664600610733, -1.570796012878418)), 'lskirt_b_01_wj': NoeVec3((-0.7853981852531433, -0.10471980273723602, -1.4486229419708252)), 'lskirt_c_01_wj': NoeVec3((-1.570796012878418, 0.0, -1.3089970350265503)), 
+    'lskirt_d_01_wj': NoeVec3((-2.3387410640716553, 0.1745329052209854, -1.3962630033493042)), 'lskirt_e_01_wj': NoeVec3((0.0, 2.8797929286956787, 1.570796012878418)), 'lskirt_f_01_wj': NoeVec3((2.3387410640716553, 0.1745329052209854, -1.7453290224075317)), 
+    'lskirt_g_01_wj': NoeVec3((1.570796012878418, 0.0, -1.832595944404602)), 'lskirt_h_01_wj': NoeVec3((0.7853981852531433, -0.10471980273723602, -1.6929689645767212)), 'skirt_a_01_wj': NoeVec3((0.0, -0.02094395086169243, -1.570796012878418)), 
+    'skirt_b_01_wj': NoeVec3((-0.3577924966812134, -0.027925269678235054, -1.4660769701004028)), 'skirt_c_01_wj': NoeVec3((-1.535889983177185, 0.11780969798564911, -1.326449990272522)), 'skirt_c_02_wj': NoeVec3((0.0, 0.06981316953897476, 0.0)), 
+    'skirt_d_01_wj': NoeVec3((-2.7052600383758545, 0.2705259919166565, -1.4660769701004028)), 'skirt_e_01_wj': NoeVec3((0.0, 2.8448870182037354, 1.570796012878418)), 'skirt_f_01_wj': NoeVec3((2.7052600383758545, 0.2705259919166565, -1.6755160093307495)), 
+    'skirt_g_01_wj': NoeVec3((1.535889983177185, 0.11780969798564911, -1.815142035484314)), 'skirt_g_02_wj': NoeVec3((0.0, 0.06981316953897476, 0.0)), 'skirt_h_01_wj': NoeVec3((0.3577924966812134, -0.027925269678235054, -1.6755160093307495)), 'spine_wj': NoeVec3((0.0, 0.0, 1.570796012878418)), 
+    'breast_c_wj': NoeVec3((0.0, 3.1415929794311523, 0.0)), 'breast_l_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 'breast_r_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 'face_root': NoeVec3((0.0, 0.01745329052209854, 0.0)), 
+    'hair_chara_root': NoeVec3((-0.01745329052209854, 0.0, -1.570796012878418)), 'hair_c_01_wj': NoeVec3((-0.003490658011287451, 0.05585053935647011, -1.623155951499939)), 'hair_l_01_wj': NoeVec3((-0.3769910931587219, 0.13788099586963654, -1.5149459838867188)), 
+    'hair_r_01_wj': NoeVec3((0.4363322854042053, 0.0052359881810843945, -1.5882500410079956)), 'hairside_l_01_wj': NoeVec3((-0.0013089970452710986, -0.06283185631036758, -1.761036992073059)), 'hairside_r_01_wj': NoeVec3((0.0008726646192371845, -0.12740899622440338, -1.3857909440994263)), 
+    'twintail_l_01_wj': NoeVec3((-0.14660769701004028, -1.1868239641189575, -1.9547690153121948)), 'twintail_l_02_wj': NoeVec3((0.09773843735456467, 0.2967059910297394, -0.1745329052209854)), 'twintail_l_03_wj': NoeVec3((0.23736479878425598, 0.48869219422340393, 0.471238911151886)), 
+    'twintail_r_01_wj': NoeVec3((0.14660769701004028, -1.1868239641189575, -1.1868239641189575)), 'twintail_r_02_wj': NoeVec3((-0.09773843735456467, 0.2094395011663437, 0.1745329052209854)), 'twintail_r_03_wj': NoeVec3((-0.2565633952617645, 0.6126105785369873, -0.5078908205032349)), 
+    'hair_root': NoeVec3((-0.03490658104419708, 0.0, -1.570796012878418)), 'hairback_c_01_wj': NoeVec3((0.0, 3.054326057434082, 1.570796012878418)), 'hairback_l_01_wj': NoeVec3((-2.5132739543914795, 0.1221729964017868, -1.483530044555664)), 
+    'hairback_r_01_wj': NoeVec3((2.5132739543914795, 0.1221729964017868, -1.6580630540847778))},
+    'GCM': {'lskirt_a_01_wj': NoeVec3((0.0, -0.0872664600610733, -1.570796012878418)), 'lskirt_b_01_wj': NoeVec3((-0.7853981852531433, -0.10471980273723602, -1.4486229419708252)), 'lskirt_c_01_wj': NoeVec3((-1.570796012878418, 0.0, -1.3089970350265503)), 
+    'lskirt_d_01_wj': NoeVec3((-2.3387410640716553, 0.1745329052209854, -1.3962630033493042)), 'lskirt_e_01_wj': NoeVec3((0.0, 2.8797929286956787, 1.570796012878418)), 'lskirt_f_01_wj': NoeVec3((2.3387410640716553, 0.1745329052209854, -1.7453290224075317)), 
+    'lskirt_g_01_wj': NoeVec3((1.570796012878418, 0.0, -1.832595944404602)), 'lskirt_h_01_wj': NoeVec3((0.7853981852531433, -0.10471980273723602, -1.6929689645767212)), 'skirt_a_01_wj': NoeVec3((0.0027038820553570986, -0.021863220259547234, -1.5769870281219482)), 
+    'skirt_b_01_wj': NoeVec3((-0.3573648929595947, -0.028413090854883194, -1.4709789752960205)), 'skirt_c_01_wj': NoeVec3((-1.535889983177185, 0.11780969798564911, -1.326449990272522)), 'skirt_c_02_wj': NoeVec3((0.0, 0.06981316953897476, 0.0)), 
+    'skirt_d_01_wj': NoeVec3((-2.704580068588257, 0.2713620066642761, -1.4670560359954834)), 'skirt_e_01_wj': NoeVec3((0.0, 2.847172975540161, 1.570796012878418)), 'skirt_f_01_wj': NoeVec3((2.704580068588257, 0.2713620066642761, -1.674536943435669)), 
+    'skirt_g_01_wj': NoeVec3((1.535889983177185, 0.11780969798564911, -1.815142035484314)), 'skirt_g_02_wj': NoeVec3((0.0, 0.06981316953897476, 0.0)), 'skirt_h_01_wj': NoeVec3((0.35736140608787537, -0.028413090854883194, -1.6706130504608154)), 
+    'spine_wj': NoeVec3((0.0, 0.0, 1.570796012878418)), 'breast_c_wj': NoeVec3((0.0, 3.1415929794311523, 0.0)), 'breast_l_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 'breast_r_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 
+    'face_root': NoeVec3((0.0, 0.01745329052209854, 0.0)), 'hair_chara_root': NoeVec3((-0.01745329052209854, 0.0, -1.570796012878418)), 'hair_c_01_wj': NoeVec3((0.0, -0.0872664600610733, -1.570796012878418)), 'hair_l_01_wj': NoeVec3((-0.4363322854042053, 0.03576179966330528, -1.570796012878418)), 
+    'hair_r_01_wj': NoeVec3((0.4363322854042053, 0.03576179966330528, -1.570796012878418)), 'hairside_l_01_wj': NoeVec3((0.0, -0.01745329052209854, -1.8500490188598633)), 'hairside_r_01_wj': NoeVec3((0.0, -0.01745329052209854, -1.291543960571289)), 
+    'hair_root': NoeVec3((-0.03490658104419708, 0.0, -1.570796012878418)), 'hairback_c_01_wj': NoeVec3((0.0, 3.054326057434082, 1.570796012878418)), 'hairback_l_01_wj': NoeVec3((-2.5132739543914795, 0.1221729964017868, -1.483530044555664)), 
+    'hairback_r_01_wj': NoeVec3((2.5132739543914795, 0.1221729964017868, -1.6580630540847778))},
+    'GCR': {'lskirt_a_01_wj': NoeVec3((0.0, -0.013919070363044739, -1.570796012878418)), 'lskirt_b_01_wj': NoeVec3((-0.7799859046936035, -0.04340285062789917, -1.4525049924850464)), 'lskirt_c_01_wj': NoeVec3((-1.570796012878418, 0.040142569690942764, -1.3065530061721802)), 
+    'lskirt_d_01_wj': NoeVec3((-2.328356981277466, 0.22371980547904968, -1.343775987625122)), 'lskirt_e_01_wj': NoeVec3((0.0, 2.825547933578491, 1.570796012878418)), 'lskirt_f_01_wj': NoeVec3((2.328356981277466, 0.22371980547904968, -1.7978110313415527)), 
+    'lskirt_g_01_wj': NoeVec3((1.570796012878418, 0.040142569690942764, -1.8350390195846558)), 'lskirt_h_01_wj': NoeVec3((0.7799859046936035, -0.04340285062789917, -1.689087986946106)), 'skirt_a_01_wj': NoeVec3((0.0, -0.0872664600610733, -1.570796012878418)), 
+    'skirt_b_01_wj': NoeVec3((-0.7853981852531433, -0.10471980273723602, -1.4660769701004028)), 'skirt_c_01_wj': NoeVec3((-1.570796012878418, 0.0, -1.3089970350265503)), 'skirt_c_02_wj': NoeVec3((0.0, 0.0872664600610733, 0.0)), 
+    'skirt_d_01_wj': NoeVec3((-2.3387410640716553, 0.1745329052209854, -1.3962630033493042)), 'skirt_e_01_wj': NoeVec3((0.0, 2.8797929286956787, 1.570796012878418)), 'skirt_f_01_wj': NoeVec3((2.3387410640716553, 0.1745329052209854, -1.7453290224075317)), 
+    'skirt_g_01_wj': NoeVec3((1.570796012878418, 0.0, -1.832595944404602)), 'skirt_g_02_wj': NoeVec3((0.0, 0.0872664600610733, 0.0)), 'skirt_h_01_wj': NoeVec3((0.7853981852531433, -0.10471980273723602, -1.6755160093307495)), 'spine_wj': NoeVec3((0.0, 0.0, 1.570796012878418)), 
+    'ribbon_chara_root': NoeVec3((0.0, 0.0, -1.570796012878418)), 'ribbon_l_01_wj': NoeVec3((0.0, 2.727268934249878, 1.7142620086669922)), 'ribbon_r_01_wj': NoeVec3((0.0, 2.727268934249878, 1.4273300170898438)), 
+    'ribbonring_l_01_wj': NoeVec3((-2.9382619857788086, 0.3464479148387909, -1.0250320434570312)), 'ribbonring_r_01_wj': NoeVec3((2.9382619857788086, 0.3464479148387909, -2.116560935974121)), 'face_root': NoeVec3((0.0, 0.01745329052209854, 0.0)), 
+    'hair_chara_root': NoeVec3((-0.01745329052209854, 0.0, -1.570796012878418)), 'hair_c_01_wj': NoeVec3((0.0, 0.057595860213041306, -1.570796012878418)), 'hair_l_01_wj': NoeVec3((0.0, 0.3901718854904175, -1.372527003288269)), 'hair_l_02_wj': NoeVec3((0.0, -0.45902159810066223, -0.7574728727340698)), 
+    'hair_r_01_wj': NoeVec3((0.0, 0.3901683986186981, -1.7690659761428833)), 'hair_r_02_wj': NoeVec3((0.0, -0.45902159810066223, 0.7574728727340698)), 'hair_twintail_l_01_wj': NoeVec3((0.0, 0.10297439992427826, -1.5489799976348877)), 
+    'hair_twintail_l_02_wj': NoeVec3((0.0, 0.02914699912071228, 0.2007129043340683)), 'hair_twintail_l_03_wj': NoeVec3((0.0, -0.22235490381717682, -0.44366270303726196)), 'hair_twintail_r_01_wj': NoeVec3((0.0, 0.10297439992427826, -1.5926129817962646)), 
+    'hair_twintail_r_02_wj': NoeVec3((0.0, 0.02914699912071228, -0.2007129043340683)), 'hair_twintail_r_03_wj': NoeVec3((0.0, -0.22235490381717682, 0.44366270303726196)), 'hair_root': NoeVec3((-0.03490658104419708, 0.0, -1.570796012878418)), 
+    'hairback_c_01_wj': NoeVec3((3.1415929794311523, -0.4689874053001404, -1.570796012878418)), 'hairback_c_02_wj': NoeVec3((0.0, -0.5562539100646973, 0.0)), 'hairback_l_01_wj': NoeVec3((-2.482556104660034, -0.256912499666214, -1.7896610498428345)), 
+    'hairback_l_02_wj': NoeVec3((0.0, -0.4893204867839813, 0.0)), 'hairback_r_01_wj': NoeVec3((2.482556104660034, -0.256912499666214, -1.3519320487976074)), 'hairback_r_02_wj': NoeVec3((0.0, -0.4893204867839813, 0.0))},
+    'GCS': {'lskirt_a_01_wj': NoeVec3((0.0, -0.013919070363044739, -1.570796012878418)), 'lskirt_b_01_wj': NoeVec3((-0.7799859046936035, -0.04340285062789917, -1.4525049924850464)), 'lskirt_c_01_wj': NoeVec3((-1.570796012878418, 0.040142569690942764, -1.3065530061721802)), 
+    'lskirt_d_01_wj': NoeVec3((-2.328356981277466, 0.22371980547904968, -1.343775987625122)), 'lskirt_e_01_wj': NoeVec3((0.0, 2.825547933578491, 1.570796012878418)), 'lskirt_f_01_wj': NoeVec3((2.328356981277466, 0.22371980547904968, -1.7978110313415527)), 
+    'lskirt_g_01_wj': NoeVec3((1.570796012878418, 0.040142569690942764, -1.8350390195846558)), 'lskirt_h_01_wj': NoeVec3((0.7799859046936035, -0.04340285062789917, -1.689087986946106)), 'skirt_a_01_wj': NoeVec3((0.0, -0.0872664600610733, -1.570796012878418)), 
+    'skirt_b_01_wj': NoeVec3((-0.7853981852531433, -0.10471980273723602, -1.4660769701004028)), 'skirt_c_01_wj': NoeVec3((-1.570796012878418, 0.0, -1.3089970350265503)), 'skirt_c_02_wj': NoeVec3((0.0, 0.0872664600610733, 0.0)), 
+    'skirt_d_01_wj': NoeVec3((-2.3387410640716553, 0.1745329052209854, -1.3962630033493042)), 'skirt_e_01_wj': NoeVec3((0.0, 2.8797929286956787, 1.570796012878418)), 'skirt_f_01_wj': NoeVec3((2.3387410640716553, 0.1745329052209854, -1.7453290224075317)), 
+    'skirt_g_01_wj': NoeVec3((1.570796012878418, 0.0, -1.832595944404602)), 'skirt_g_02_wj': NoeVec3((0.0, 0.0872664600610733, 0.0)), 'skirt_h_01_wj': NoeVec3((0.7853981852531433, -0.10471980273723602, -1.6755160093307495)), 
+    'spine_wj': NoeVec3((0.0, 0.0, 1.570796012878418)), 'ribbon_chara_root': NoeVec3((0.0, 0.0, -1.570796012878418)), 'ribbon_l_01_wj': NoeVec3((0.0, 2.727268934249878, 1.7142620086669922)), 'ribbon_r_01_wj': NoeVec3((0.0, 2.727268934249878, 1.4273300170898438)), 
+    'ribbonring_l_01_wj': NoeVec3((-2.9382619857788086, 0.3464479148387909, -1.0250320434570312)), 'ribbonring_r_01_wj': NoeVec3((2.9382619857788086, 0.3464479148387909, -2.116560935974121)), 'face_root': NoeVec3((0.0, 0.01745329052209854, 0.0)), 
+    'hair_chara_root': NoeVec3((-0.01745329052209854, 0.0, -1.570796012878418)), 'hair_c_01_wj': NoeVec3((0.0, 0.01837831921875477, -1.570796012878418)), 'hair_l_01_wj': NoeVec3((-0.4948183000087738, 0.0172787606716156, -1.5387870073318481)), 
+    'hair_r_01_wj': NoeVec3((0.4497363865375519, -0.0172787606716156, -1.6028059720993042)), 'hairadd_l_01_wj': NoeVec3((-0.4188790023326874, 0.04769985005259514, -1.5810070037841797)), 'hairadd_r_01_wj': NoeVec3((0.4188790023326874, -0.04769985005259514, -1.5605859756469727)), 
+    'hairside_l_01_wj': NoeVec3((0.0, -0.13950419425964355, -1.7671979665756226)), 'hairside_l_02_wj': NoeVec3((-0.02569125033915043, -0.1359436959028244, -0.1788787990808487)), 'hairside_r_01_wj': NoeVec3((0.0, -0.13950419425964355, -1.3743770122528076)), 
+    'hairside_r_02_wj': NoeVec3((0.02569125033915043, -0.1359436959028244, 0.1788787990808487)), 'hair_root': NoeVec3((-0.01745329052209854, 0.0, -1.570796012878418)), 'hairback_c_01_wj': NoeVec3((0.0, 3.4583699703216553, 1.570796012878418)), 
+    'hairback_c_02_wj': NoeVec3((0.0, -0.39941689372062683, 0.0)), 'hairback_l_01_wj': NoeVec3((-2.4936740398406982, -0.2701491117477417, -1.714298963546753)), 'hairback_l_02_wj': NoeVec3((0.0, -0.5186089277267456, 0.0)), 
+    'hairback_r_01_wj': NoeVec3((2.4936740398406982, -0.2701491117477417, -1.4272949695587158)), 'hairback_r_02_wj': NoeVec3((0.0, -0.5186089277267456, 0.0))},
+    'GCT': {'lskirt_a_01_wj': NoeVec3((0.0, -0.013919070363044739, -1.570796012878418)), 'lskirt_b_01_wj': NoeVec3((-0.7799859046936035, -0.04340285062789917, -1.4525049924850464)), 'lskirt_c_01_wj': NoeVec3((-1.570796012878418, 0.040142569690942764, -1.3065530061721802)), 
+    'lskirt_d_01_wj': NoeVec3((-2.328356981277466, 0.22371980547904968, -1.343775987625122)), 'lskirt_e_01_wj': NoeVec3((0.0, 2.825547933578491, 1.570796012878418)), 'lskirt_f_01_wj': NoeVec3((2.328356981277466, 0.22371980547904968, -1.7978110313415527)), 
+    'lskirt_g_01_wj': NoeVec3((1.570796012878418, 0.040142569690942764, -1.8350390195846558)), 'lskirt_h_01_wj': NoeVec3((0.7799859046936035, -0.04340285062789917, -1.689087986946106)), 'skirt_a_01_wj': NoeVec3((0.0, -0.0872664600610733, -1.570796012878418)), 
+    'skirt_b_01_wj': NoeVec3((-0.7853981852531433, -0.10471980273723602, -1.4660769701004028)), 'skirt_c_01_wj': NoeVec3((-1.570796012878418, 0.0, -1.3089970350265503)), 'skirt_c_02_wj': NoeVec3((0.0, 0.0872664600610733, 0.0)), 
+    'skirt_d_01_wj': NoeVec3((-2.3387410640716553, 0.1745329052209854, -1.3962630033493042)), 'skirt_e_01_wj': NoeVec3((0.0, 2.8797929286956787, 1.570796012878418)), 'skirt_f_01_wj': NoeVec3((2.3387410640716553, 0.1745329052209854, -1.7453290224075317)), 
+    'skirt_g_01_wj': NoeVec3((1.570796012878418, 0.0, -1.832595944404602)), 'skirt_g_02_wj': NoeVec3((0.0, 0.0872664600610733, 0.0)), 'skirt_h_01_wj': NoeVec3((0.7853981852531433, -0.10471980273723602, -1.6755160093307495)), 'spine_wj': NoeVec3((0.0, 0.0, 1.570796012878418)), 
+    'ribbon_chara_root': NoeVec3((0.0, 0.0, -1.570796012878418)), 'ribbon_l_01_wj': NoeVec3((0.0, 2.727268934249878, 1.7142620086669922)), 'ribbon_r_01_wj': NoeVec3((0.0, 2.727268934249878, 1.4273300170898438)), 
+    'ribbonring_l_01_wj': NoeVec3((-2.9382619857788086, 0.3464479148387909, -1.0250320434570312)), 'ribbonring_r_01_wj': NoeVec3((2.9382619857788086, 0.3464479148387909, -2.116560935974121)), 'face_root': NoeVec3((0.0, 0.01745329052209854, 0.0)), 
+    'hair_chara_root': NoeVec3((-0.01745329052209854, 0.0, -1.570796012878418)), 'hair_c_01_wj': NoeVec3((0.0, -0.03193952888250351, -1.570796012878418)), 'hair_l_01_wj': NoeVec3((0.01518435962498188, 0.12723450362682343, -1.4521139860153198)), 
+    'hair_r_01_wj': NoeVec3((-0.008726646192371845, 0.07504914700984955, -1.6842429637908936)), 'hairside_l_01_wj': NoeVec3((-0.0029670600779354572, 0.06579892337322235, -1.6170480251312256)), 'hairside_l_02_wj': NoeVec3((0.06824237108230591, -0.1745329052209854, -0.3291637897491455)), 
+    'hairside_r_01_wj': NoeVec3((0.0029670600779354572, 0.06579892337322235, -1.5245449542999268)), 'hairside_r_02_wj': NoeVec3((-0.06824237108230591, -0.1745329052209854, 0.3291637897491455)), 'hair_root': NoeVec3((-0.03490658104419708, 0.0, -1.570796012878418)), 
+    'hairback_c_01_wj': NoeVec3((0.0, 2.953097105026245, 1.570796012878418)), 'hairback_c_02_wj': NoeVec3((0.0, -0.08377580344676971, 0.0)), 'hairback_c_03_wj': NoeVec3((0.0, 0.4869469106197357, 0.0)), 'hairback_l_01_wj': NoeVec3((-2.4434609413146973, 0.13439039885997772, -1.4660769701004028)), 
+    'hairback_l_02_wj': NoeVec3((0.0, -0.13613569736480713, 0.0)), 'hairback_l_03_wj': NoeVec3((0.0, 0.5235987901687622, 0.0)), 'hairback_r_01_wj': NoeVec3((2.4434609413146973, 0.13439039885997772, -1.6755160093307495)), 'hairback_r_02_wj': NoeVec3((0.0, -0.13613569736480713, 0.0)), 
+    'hairback_r_03_wj': NoeVec3((0.0, 0.5235987901687622, 0.0))},
+    'GCY': {'lskirt_a_01_wj': NoeVec3((0.0, -0.013919070363044739, -1.570796012878418)), 'lskirt_b_01_wj': NoeVec3((-0.7799859046936035, -0.04340285062789917, -1.4525049924850464)), 'lskirt_c_01_wj': NoeVec3((-1.570796012878418, 0.040142569690942764, -1.3065530061721802)), 
+    'lskirt_d_01_wj': NoeVec3((-2.328356981277466, 0.22371980547904968, -1.343775987625122)), 'lskirt_e_01_wj': NoeVec3((0.0, 2.825547933578491, 1.570796012878418)), 'lskirt_f_01_wj': NoeVec3((2.328356981277466, 0.22371980547904968, -1.7978110313415527)), 
+    'lskirt_g_01_wj': NoeVec3((1.570796012878418, 0.040142569690942764, -1.8350390195846558)), 'lskirt_h_01_wj': NoeVec3((0.7799859046936035, -0.04340285062789917, -1.689087986946106)), 'skirt_a_01_wj': NoeVec3((0.0, -0.0872664600610733, -1.570796012878418)), 
+    'skirt_b_01_wj': NoeVec3((-0.7853981852531433, -0.10471980273723602, -1.4660769701004028)), 'skirt_c_01_wj': NoeVec3((-1.570796012878418, 0.0, -1.3089970350265503)), 'skirt_c_02_wj': NoeVec3((0.0, 0.0872664600610733, 0.0)), 
+    'skirt_d_01_wj': NoeVec3((-2.3387410640716553, 0.1745329052209854, -1.3962630033493042)), 'skirt_e_01_wj': NoeVec3((0.0, 2.8797929286956787, 1.570796012878418)), 'skirt_f_01_wj': NoeVec3((2.3387410640716553, 0.1745329052209854, -1.7453290224075317)), 
+    'skirt_g_01_wj': NoeVec3((1.570796012878418, 0.0, -1.832595944404602)), 'skirt_g_02_wj': NoeVec3((0.0, 0.0872664600610733, 0.0)), 'skirt_h_01_wj': NoeVec3((0.7853981852531433, -0.10471980273723602, -1.6755160093307495)), 'spine_wj': NoeVec3((0.0, 0.0, 1.570796012878418)), 
+    'ribbon_chara_root': NoeVec3((0.0, 0.0, -1.570796012878418)), 'ribbon_l_01_wj': NoeVec3((0.0, 2.727268934249878, 1.7142620086669922)), 'ribbon_r_01_wj': NoeVec3((0.0, 2.727268934249878, 1.4273300170898438)), 
+    'ribbonring_l_01_wj': NoeVec3((-2.9382619857788086, 0.3464479148387909, -1.0250320434570312)), 'ribbonring_r_01_wj': NoeVec3((2.9382619857788086, 0.3464479148387909, -2.116560935974121)), 'face_root': NoeVec3((0.0, 0.01745329052209854, 0.0)), 
+    'hair_chara_root': NoeVec3((-0.01745329052209854, 0.0, -1.570796012878418)), 'hair_c_01_wj': NoeVec3((0.0, -0.04363323003053665, -1.570796012878418)), 'hair_l_01_wj': NoeVec3((0.0, -0.03490658104419708, -1.483530044555664)), 
+    'hair_r_01_wj': NoeVec3((0.0, -0.03490658104419708, -1.6580630540847778)), 'hairacce_c_01_wj': NoeVec3((1.1170109510421753, 0.01745329052209854, -1.5184359550476074)), 'hairacce_c_02_wj': NoeVec3((0.0, -0.10471980273723602, 0.0)), 
+    'hairside_l_01_wj': NoeVec3((-1.6580630540847778, 0.0, -1.6580630540847778)), 'hairside_l_02_wj': NoeVec3((0.0, -0.10471980273723602, -0.0872664600610733)), 'hairside_l_03_wj': NoeVec3((0.0, 0.06981316953897476, -0.5759587287902832)), 
+    'hairside_r_01_wj': NoeVec3((1.6057029962539673, 0.0872664600610733, -1.5184359550476074)), 'hairside_r_02_wj': NoeVec3((0.0, -0.09845279902219772, 0.0872664600610733)), 'hairside_r_03_wj': NoeVec3((0.0, 0.04846237972378731, 0.37896859645843506)), 
+    'hair_root': NoeVec3((-0.03490658104419708, 0.0, -1.570796012878418)), 'hairback_c_01_wj': NoeVec3((3.1415929794311523, 0.0, -1.570796012878418)), 'hairback_c_02_wj': NoeVec3((0.0, -0.1745329052209854, 0.0)), 'hairback_c_03_wj': NoeVec3((0.0, -0.0872664600610733, 0.0)), 
+    'hairback_c_04_wj': NoeVec3((0.0, 0.2617993950843811, 0.0)), 'hairback_l_01_wj': NoeVec3((-2.462398052215576, 0.11277379840612411, -1.6050000190734863)), 'hairback_l_02_wj': NoeVec3((0.0, -0.1745329052209854, -0.0872664600610733)), 'hairback_l_03_wj': NoeVec3((0.0, -0.0872664600610733, 0.0)), 
+    'hairback_l_04_wj': NoeVec3((0.0, 0.4363322854042053, 0.0)), 'hairback_r_01_wj': NoeVec3((2.462398052215576, 0.11277379840612411, -1.5365949869155884)), 'hairback_r_02_wj': NoeVec3((0.0, -0.1745329052209854, 0.0872664600610733)), 'hairback_r_03_wj': NoeVec3((0.0, -0.0872664600610733, 0.0)), 
+    'hairback_r_04_wj': NoeVec3((0.0, 0.4363322854042053, 0.0))},
+    'KNA': {'lskirt_a_01_wj': NoeVec3((0.0, -0.0872664600610733, -1.570796012878418)), 'lskirt_b_01_wj': NoeVec3((-0.7853981852531433, -0.10471980273723602, -1.4486229419708252)), 'lskirt_c_01_wj': NoeVec3((-1.570796012878418, 0.0, -1.3089970350265503)), 
+    'lskirt_d_01_wj': NoeVec3((-2.3387410640716553, 0.1745329052209854, -1.3962630033493042)), 'lskirt_e_01_wj': NoeVec3((0.0, 2.8797929286956787, 1.570796012878418)), 'lskirt_f_01_wj': NoeVec3((2.3387410640716553, 0.1745329052209854, -1.7453290224075317)), 
+    'lskirt_g_01_wj': NoeVec3((1.570796012878418, 0.0, -1.832595944404602)), 'lskirt_h_01_wj': NoeVec3((0.7853981852531433, -0.10471980273723602, -1.6929689645767212)), 'skirt_a_01_wj': NoeVec3((0.0, -0.0872664600610733, -1.570796012878418)), 'skirt_a_02_wj': NoeVec3((0.0, -0.025307100266218185, 0.0)), 
+    'skirt_b_01_wj': NoeVec3((-0.7882360816001892, -0.08088553696870804, -1.4897170066833496)), 'skirt_b_02_wj': NoeVec3((0.0010948049603030086, 0.011426649987697601, -0.00011334779992466792)), 'skirt_c_01_wj': NoeVec3((-1.570796012878418, 0.0, -1.2361290454864502)), 
+    'skirt_c_02_wj': NoeVec3((0.0, 0.04814979061484337, 0.0)), 'skirt_d_01_wj': NoeVec3((-2.34437894821167, 0.19759400188922882, -1.3724329471588135)), 'skirt_d_02_wj': NoeVec3((-0.0018062059534713626, 0.045111700892448425, 0.0004355731070972979)), 
+    'skirt_e_01_wj': NoeVec3((0.0, 2.878187894821167, 1.570796012878418)), 'skirt_e_02_wj': NoeVec3((0.0, 0.04861946031451225, 0.0)), 'skirt_f_01_wj': NoeVec3((2.3443610668182373, 0.19759400188922882, -1.7691700458526611)), 
+    'skirt_f_02_wj': NoeVec3((0.001807707012630999, 0.045111700892448425, -0.00043593961163423955)), 'skirt_g_01_wj': NoeVec3((1.570796012878418, 0.0, -1.9054629802703857)), 'skirt_g_02_wj': NoeVec3((0.0, -0.018122969195246696, 0.0)), 
+    'skirt_h_01_wj': NoeVec3((0.7882273197174072, -0.08088675886392593, -1.6518759727478027)), 'skirt_h_02_wj': NoeVec3((-0.0010847339872270823, 0.011427580378949642, 0.00011230500240344554)), 'spine_wj': NoeVec3((0.0, 0.0, 1.570796012878418)), 'breast_c_wj': NoeVec3((0.0, 3.1415929794311523, 0.0)), 
+    'breast_l_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 'breast_r_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 'cardigan_a_01_wj': NoeVec3((-0.7737218737602234, 0.0835627019405365, -3.0510098934173584)), 'cardigan_a_02_wj': NoeVec3((0.0, -0.025747450068593025, 0.0)), 
+    'cardigan_b_01_wj': NoeVec3((-1.5394330024719238, 0.17172010242938995, -2.9600090980529785)), 'cardigan_b_02_wj': NoeVec3((0.0, -0.14305570721626282, 0.0)), 'cardigan_c_01_wj': NoeVec3((0.6513218879699707, 2.93723201751709, 0.02305039018392563)), 
+    'cardigan_c_02_wj': NoeVec3((0.13305220007896423, -0.2662028968334198, -0.04003069922327995)), 'cardigan_d_01_wj': NoeVec3((0.0, 2.840714931488037, 0.0)), 'cardigan_e_01_wj': NoeVec3((2.4902710914611816, 0.20436759293079376, 3.118536949157715)), 
+    'cardigan_e_02_wj': NoeVec3((-0.1330574005842209, -0.2662028968334198, 0.040032271295785904)), 'cardigan_f_01_wj': NoeVec3((1.5394350290298462, 0.17172010242938995, 2.9600090980529785)), 'cardigan_f_02_wj': NoeVec3((0.0, -0.1430577039718628, 0.0)), 
+    'cardigan_g_01_wj': NoeVec3((0.7737289071083069, 0.08356322348117828, 3.0510098934173584)), 'cardigan_g_02_wj': NoeVec3((0.0, -0.025746570900082588, 6.668798278042232e-07)), 'face_root': NoeVec3((0.0, 0.01745329052209854, 0.0)), 'hair_chara_root': NoeVec3((-0.01745329052209854, 0.0, -1.570796012878418)), 
+    'hair_c_01_wj': NoeVec3((-0.007624994032084942, -0.08693362772464752, -1.4831980466842651)), 'hair_l_01_wj': NoeVec3((-0.5425443053245544, 0.365192711353302, -1.3512059450149536)), 'hair_r_01_wj': NoeVec3((1.0902249813079834, 0.03879448026418686, -1.6934479475021362)), 
+    'kanzashi_c_01_wj': NoeVec3((-1.436076045036316, 0.010468239895999432, -1.12916898727417)), 'hairback_c_01_wj': NoeVec3((0.0, 3.054326057434082, 1.570796012878418)), 'hairback_l_01_wj': NoeVec3((-1.9784350395202637, 0.15723790228366852, -1.4028279781341553)), 
+    'hairback_r_01_wj': NoeVec3((1.9784350395202637, 0.15723790228366852, -1.7387670278549194))},
+    'KNC': {'lskirt_a_01_wj': NoeVec3((0.0, -0.0872664600610733, -1.570796012878418)), 'lskirt_b_01_wj': NoeVec3((-0.7853981852531433, -0.10471980273723602, -1.4486229419708252)), 'lskirt_c_01_wj': NoeVec3((-1.570796012878418, 0.0, -1.3089970350265503)), 
+    'lskirt_d_01_wj': NoeVec3((-2.3387410640716553, 0.1745329052209854, -1.3962630033493042)), 'lskirt_e_01_wj': NoeVec3((0.0, 2.8797929286956787, 1.570796012878418)), 'lskirt_f_01_wj': NoeVec3((2.3387410640716553, 0.1745329052209854, -1.7453290224075317)), 
+    'lskirt_g_01_wj': NoeVec3((1.570796012878418, 0.0, -1.832595944404602)), 'lskirt_h_01_wj': NoeVec3((0.7853981852531433, -0.10471980273723602, -1.6929689645767212)), 'skirt_a_01_wj': NoeVec3((0.0, -0.10471980273723602, -1.570796012878418)), 
+    'skirt_b_01_wj': NoeVec3((-0.7853981852531433, -0.05235987901687622, -1.4660769701004028)), 'skirt_c_01_wj': NoeVec3((-1.570796012878418, 0.0, -1.3613569736480713)), 'skirt_d_01_wj': NoeVec3((-2.3387410640716553, 0.19198620319366455, -1.4137170314788818)), 
+    'skirt_e_01_wj': NoeVec3((0.0, 2.8797929286956787, 1.570796012878418)), 'skirt_f_01_wj': NoeVec3((2.3387410640716553, 0.19198620319366455, -1.7278759479522705)), 'skirt_g_01_wj': NoeVec3((1.570796012878418, 0.0, -1.780236005783081)), 
+    'skirt_h_01_wj': NoeVec3((0.7853981852531433, -0.05235987901687622, -1.6755160093307495)), 'spine_wj': NoeVec3((0.0, 0.0, 1.570796012878418)), 'breast_c_wj': NoeVec3((0.0, 3.1415929794311523, 0.0)), 'breast_l_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 
+    'breast_r_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 'face_root': NoeVec3((0.0, 0.01745329052209854, 0.0)), 'hair_chara_root': NoeVec3((-0.01745329052209854, 0.0, -1.570796012878418)), 'hair_c_01_wj': NoeVec3((0.01745329052209854, 0.0872664600610733, -1.4486229419708252)), 
+    'hair_l_01_wj': NoeVec3((-0.811578094959259, 0.4118976891040802, -1.3910269737243652)), 'hair_r_01_wj': NoeVec3((0.820304811000824, 0.3839724063873291, -1.6929689645767212)), 'hairside_l_01_wj': NoeVec3((-1.3962630033493042, 0.16807520389556885, -1.483530044555664)), 
+    'hairside_r_01_wj': NoeVec3((1.483530044555664, 0.23038350045681, -1.5428709983825684)), 'twintail_l_01_wj': NoeVec3((-2.4260079860687256, -0.019198620691895485, -1.4590950012207031)), 'twintail_l_02_wj': NoeVec3((0.0052359881810843945, -0.14660769701004028, 0.13439039885997772)), 
+    'twintail_l_03_wj': NoeVec3((0.02617993950843811, -0.33510321378707886, -0.07853981852531433)), 'twintail_l_04_wj': NoeVec3((0.0, 0.5585054159164429, 0.0)), 'twintail_r_01_wj': NoeVec3((2.4260079860687256, -0.019198620691895485, -1.6824970245361328)), 
+    'twintail_r_02_wj': NoeVec3((-0.0052359881810843945, -0.14660769701004028, -0.13439039885997772)), 'twintail_r_03_wj': NoeVec3((-0.02617993950843811, -0.33510321378707886, 0.07853981852531433)), 'twintail_r_04_wj': NoeVec3((0.0, 0.5585054159164429, 0.0)), 
+    'hair_root': NoeVec3((-0.03490658104419708, 0.0, -1.570796012878418)), 'hairback_c_01_wj': NoeVec3((0.0, 3.054326057434082, 1.570796012878418)), 'hairback_l_01_wj': NoeVec3((-2.5132739543914795, 0.1221729964017868, -1.483530044555664)), 
+    'hairback_r_01_wj': NoeVec3((2.5132739543914795, 0.1221729964017868, -1.6580630540847778))},
+    'KNK': {'lskirt_a_01_wj': NoeVec3((0.0, -0.0872664600610733, -1.570796012878418)), 'lskirt_b_01_wj': NoeVec3((-0.7853981852531433, -0.10471980273723602, -1.4486229419708252)), 'lskirt_c_01_wj': NoeVec3((-1.570796012878418, 0.0, -1.3089970350265503)), 
+    'lskirt_d_01_wj': NoeVec3((-2.3387410640716553, 0.1745329052209854, -1.3962630033493042)), 'lskirt_e_01_wj': NoeVec3((0.0, 2.8797929286956787, 1.570796012878418)), 'lskirt_f_01_wj': NoeVec3((2.3387410640716553, 0.1745329052209854, -1.7453290224075317)), 
+    'lskirt_g_01_wj': NoeVec3((1.570796012878418, 0.0, -1.832595944404602)), 'lskirt_h_01_wj': NoeVec3((0.7853981852531433, -0.10471980273723602, -1.6929689645767212)), 'skirt_a_01_wj': NoeVec3((0.0, -0.15533429384231567, -1.570796012878418)), 
+    'skirt_b_01_wj': NoeVec3((-0.7923794984817505, -0.111701101064682, -1.3962630033493042)), 'skirt_c_01_wj': NoeVec3((-1.570796012878418, 0.0, -1.239184021949768)), 'skirt_c_02_wj': NoeVec3((0.0, 0.05235987901687622, 0.0)), 
+    'skirt_d_01_wj': NoeVec3((-2.3177969455718994, 0.259181410074234, -1.3046339750289917)), 'skirt_d_02_wj': NoeVec3((0.0, 0.05235987901687622, 0.0)), 'skirt_e_01_wj': NoeVec3((0.0, 2.782054901123047, 1.570796012878418)), 'skirt_e_02_wj': NoeVec3((0.0, 0.05235987901687622, 0.0)), 
+    'skirt_f_01_wj': NoeVec3((2.303834915161133, 0.259181410074234, -1.8369590044021606)), 'skirt_f_02_wj': NoeVec3((0.0, 0.05235987901687622, 0.0)), 'skirt_g_01_wj': NoeVec3((1.570796012878418, 0.0, -1.9024089574813843)), 'skirt_g_02_wj': NoeVec3((0.0, 0.05235987901687622, 0.0)), 
+    'skirt_h_01_wj': NoeVec3((0.7923794984817505, -0.111701101064682, -1.7453290224075317)), 'spine_wj': NoeVec3((0.0, 0.0, 1.570796012878418)), 'breast_c_wj': NoeVec3((0.0, 3.1415929794311523, 0.0)), 'breast_l_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 
+    'breast_r_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 'face_root': NoeVec3((0.0, 0.01745329052209854, 0.0)), 'hair_chara_root': NoeVec3((-0.01745329052209854, 0.0, -1.570796012878418)), 'hair_c_01_wj': NoeVec3((0.06213371828198433, 0.12566369771957397, -1.1100289821624756)), 
+    'hair_l_01_wj': NoeVec3((-1.1344640254974365, 0.5201081037521362, -1.1955510377883911)), 'hair_r_01_wj': NoeVec3((1.3229600191116333, 0.4415682852268219, -1.6266469955444336)), 'hairside_l_01_wj': NoeVec3((0.008377579972147942, -0.10175269842147827, -1.7558009624481201)), 
+    'hairside_l_02_wj': NoeVec3((0.0, -0.2998476028442383, 0.17034409940242767)), 'hairside_l_03_wj': NoeVec3((0.0, 0.2094395011663437, 0.18500490486621857)), 'hairside_r_01_wj': NoeVec3((-0.008377579972147942, -0.10175269842147827, -1.3857909440994263)), 
+    'hairside_r_02_wj': NoeVec3((0.0, -0.2998476028442383, -0.17034409940242767)), 'hairside_r_03_wj': NoeVec3((0.0, 0.2094395011663437, -0.18500490486621857)), 'hair_root': NoeVec3((-0.03490658104419708, 0.0, -1.570796012878418)), 
+    'hairback_c_01_wj': NoeVec3((0.0, 2.9112091064453125, 1.570796012878418)), 'hairback_c_02_wj': NoeVec3((0.0, 0.008377579972147942, 0.0)), 'hairback_c_03_wj': NoeVec3((0.0, 0.14546220004558563, 0.0)), 'hairback_c_04_wj': NoeVec3((0.0, 0.3074274957180023, 0.0)), 
+    'hairback_l_01_wj': NoeVec3((-2.530726909637451, 0.24958209693431854, -1.4957469701766968)), 'hairback_l_02_wj': NoeVec3((0.0, -0.02705259993672371, -0.11257369816303253)), 'hairback_l_03_wj': NoeVec3((0.0, 0.19722220301628113, 0.022689279168844223)), 
+    'hairback_l_04_wj': NoeVec3((0.0, 0.3141593039035797, 0.04886921867728233)), 'hairback_r_01_wj': NoeVec3((2.530726909637451, 0.24958209693431854, -1.6458460092544556)), 'hairback_r_02_wj': NoeVec3((0.0, -0.02705259993672371, 0.11257369816303253)), 
+    'hairback_r_03_wj': NoeVec3((0.0, 0.19722220301628113, -0.022689279168844223)), 'hairback_r_04_wj': NoeVec3((0.0, 0.3141593039035797, -0.04886921867728233)), 'parka_a_01_wj': NoeVec3((-0.3066543936729431, 0.07330383360385895, -3.0124380588531494)), 
+    'parka_a_02_wj': NoeVec3((0.0, -0.016755159944295883, 0.08552113175392151)), 'parka_a_03_wj': NoeVec3((0.0, 0.0, 0.07330383360385895)), 'parka_b_01_wj': NoeVec3((1.5742870569229126, 2.919935941696167, 0.19198620319366455)), 'parka_b_02_wj': NoeVec3((0.0, -0.15882499516010284, 0.0)), 
+    'parka_c_01_wj': NoeVec3((0.0, 2.8068389892578125, 0.0)), 'parka_c_02_wj': NoeVec3((0.0, -0.16929690539836884, 0.0)), 'parka_d_01_wj': NoeVec3((1.5673060417175293, 0.22165679931640625, 2.949605941772461)), 'parka_d_02_wj': NoeVec3((0.0, -0.15882499516010284, 0.0)), 
+    'parka_e_01_wj': NoeVec3((0.3066543936729431, 0.07330383360385895, 3.0124380588531494)), 'parka_e_02_wj': NoeVec3((0.0, -0.016755159944295883, -0.08552113175392151)), 'parka_e_03_wj': NoeVec3((0.0, 0.0, -0.07330383360385895))},
+    'KNS': {'lskirt_a_01_wj': NoeVec3((0.0, -0.0872664600610733, -1.570796012878418)), 'lskirt_b_01_wj': NoeVec3((-0.7853981852531433, -0.10471980273723602, -1.4486229419708252)), 'lskirt_c_01_wj': NoeVec3((-1.570796012878418, 0.0, -1.3089970350265503)), 
+    'lskirt_d_01_wj': NoeVec3((-2.3387410640716553, 0.1745329052209854, -1.3962630033493042)), 'lskirt_e_01_wj': NoeVec3((0.0, 2.8797929286956787, 1.570796012878418)), 'lskirt_f_01_wj': NoeVec3((2.3387410640716553, 0.1745329052209854, -1.7453290224075317)), 
+    'lskirt_g_01_wj': NoeVec3((1.570796012878418, 0.0, -1.832595944404602)), 'lskirt_h_01_wj': NoeVec3((0.7853981852531433, -0.10471980273723602, -1.6929689645767212)), 'skirt_a_01_wj': NoeVec3((0.0, -0.13962629437446594, -1.570796012878418)), 
+    'skirt_b_01_wj': NoeVec3((-0.7941247820854187, -0.09599310904741287, -1.3788100481033325)), 'skirt_c_01_wj': NoeVec3((-1.570796012878418, 0.0, -1.291543960571289)), 'skirt_d_01_wj': NoeVec3((-2.3212881088256836, 0.27925270795822144, -1.3962630033493042)), 
+    'skirt_e_01_wj': NoeVec3((0.0, 2.792526960372925, 1.570796012878418)), 'skirt_f_01_wj': NoeVec3((2.3212881088256836, 0.27925270795822144, -1.7453290224075317)), 'skirt_g_01_wj': NoeVec3((1.570796012878418, 0.0, -1.8500490188598633)), 
+    'skirt_h_01_wj': NoeVec3((0.7941247820854187, -0.09599310904741287, -1.7627830505371094)), 'spine_wj': NoeVec3((0.0, 0.0, 1.570796012878418)), 'breast_c_wj': NoeVec3((0.0, 3.1415929794311523, 0.0)), 'breast_l_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 
+    'breast_r_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 'face_root': NoeVec3((0.0, 0.01745329052209854, 0.0)), 'hair_chara_root': NoeVec3((-0.01745329052209854, 0.0, -1.570796012878418)), 'hair_c_01_wj': NoeVec3((0.0, -0.1745329052209854, -1.570796012878418)), 
+    'hair_l_01_wj': NoeVec3((-0.8028513789176941, 0.0, -1.483530044555664)), 'hair_r_01_wj': NoeVec3((0.8028513789176941, 0.0, -1.6580630540847778)), 'hairside_l_01_wj': NoeVec3((0.08203048259019852, -0.33161258697509766, -1.9024089574813843)), 
+    'hairside_r_01_wj': NoeVec3((-0.08203048259019852, -0.33161258697509766, -1.239184021949768)), 'hair_root': NoeVec3((-0.03490658104419708, 0.0, -1.570796012878418)), 'hairback_c_01_wj': NoeVec3((0.0, 3.2114059925079346, 1.570796012878418)), 
+    'hairback_c_02_wj': NoeVec3((0.0, -0.3490658104419708, 0.0)), 'hairback_l_01_wj': NoeVec3((-2.5132739543914795, 0.0, -1.780236005783081)), 'hairback_l_02_wj': NoeVec3((0.0, -0.3490658104419708, 0.0)), 'hairback_r_01_wj': NoeVec3((2.5132739543914795, 0.0, -1.3613569736480713)), 
+    'hairback_r_02_wj': NoeVec3((0.0, -0.3490658104419708, 0.0))},
+    'KNY': {'lskirt_a_01_wj': NoeVec3((0.0, -0.0872664600610733, -1.570796012878418)), 'lskirt_b_01_wj': NoeVec3((-0.7853981852531433, -0.10471980273723602, -1.4486229419708252)), 'lskirt_c_01_wj': NoeVec3((-1.570796012878418, 0.0, -1.3089970350265503)), 
+    'lskirt_d_01_wj': NoeVec3((-2.3387410640716553, 0.1745329052209854, -1.3962630033493042)), 'lskirt_e_01_wj': NoeVec3((0.0, 2.8797929286956787, 1.570796012878418)), 'lskirt_f_01_wj': NoeVec3((2.3387410640716553, 0.1745329052209854, -1.7453290224075317)), 
+    'lskirt_g_01_wj': NoeVec3((1.570796012878418, 0.0, -1.832595944404602)), 'lskirt_h_01_wj': NoeVec3((0.7853981852531433, -0.10471980273723602, -1.6929689645767212)), 'skirt_a_01_wj': NoeVec3((0.0, -0.13962629437446594, -1.570796012878418)), 
+    'skirt_b_01_wj': NoeVec3((-0.7941247820854187, -0.09599310904741287, -1.3788100481033325)), 'skirt_c_01_wj': NoeVec3((-1.570796012878418, 0.0, -1.291543960571289)), 'skirt_d_01_wj': NoeVec3((-2.3212881088256836, 0.27925270795822144, -1.3962630033493042)), 
+    'skirt_e_01_wj': NoeVec3((0.0, 2.792526960372925, 1.570796012878418)), 'skirt_f_01_wj': NoeVec3((2.3212881088256836, 0.27925270795822144, -1.7453290224075317)), 'skirt_g_01_wj': NoeVec3((1.570796012878418, 0.0, -1.8500490188598633)), 
+    'skirt_h_01_wj': NoeVec3((0.7941247820854187, -0.09599310904741287, -1.7627830505371094)), 'spine_wj': NoeVec3((0.0, 0.0, 1.570796012878418)), 'breast_c_wj': NoeVec3((0.0, 3.1415929794311523, 0.0)), 'breast_l_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 
+    'breast_r_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 'face_root': NoeVec3((0.0, 0.01745329052209854, 0.0)), 'hair_chara_root': NoeVec3((-0.01745329052209854, 0.0, -1.570796012878418)), 
+    'hair_c_01_wj': NoeVec3((-0.0017453290056437254, -0.01745329052209854, -1.4660769701004028)), 'hair_l_01_wj': NoeVec3((-0.7853981852531433, 0.2617993950843811, -1.535889983177185)), 'hair_r_01_wj': NoeVec3((0.7853981852531433, 0.2617993950843811, -1.6057029962539673)), 
+    'hairside_l_01_wj': NoeVec3((0.0872664600610733, -0.27925270795822144, -1.9198620319366455)), 'hairside_r_01_wj': NoeVec3((-0.0872664600610733, -0.27925270795822144, -1.3089970350265503)), 'hair_root': NoeVec3((-0.03490658104419708, 0.0, -1.570796012878418)), 
+    'hairback_c_01_wj': NoeVec3((0.0, 3.2114059925079346, 1.570796012878418)), 'hairback_c_02_wj': NoeVec3((0.0, -0.3490658104419708, 0.0)), 'hairback_l_01_wj': NoeVec3((-2.268928050994873, -0.03490658104419708, -1.4486229419708252)), 'hairback_l_02_wj': NoeVec3((0.0, -0.3490658104419708, 0.0)), 
+    'hairback_r_01_wj': NoeVec3((2.268928050994873, -0.03490658104419708, -1.6929689645767212)), 'hairback_r_02_wj': NoeVec3((0.0, -0.3490658104419708, 0.0))},
+    'MIB': {'lskirt_a_01_wj': NoeVec3((0.0, -0.0872664600610733, -1.570796012878418)), 'lskirt_b_01_wj': NoeVec3((-0.7853981852531433, -0.10471980273723602, -1.4486229419708252)), 'lskirt_c_01_wj': NoeVec3((-1.570796012878418, 0.0, -1.3089970350265503)), 
+    'lskirt_d_01_wj': NoeVec3((-2.3387410640716553, 0.1745329052209854, -1.3962630033493042)), 'lskirt_e_01_wj': NoeVec3((0.0, 2.8797929286956787, 1.570796012878418)), 'lskirt_f_01_wj': NoeVec3((2.3387410640716553, 0.1745329052209854, -1.7453290224075317)), 
+    'lskirt_g_01_wj': NoeVec3((1.570796012878418, 0.0, -1.832595944404602)), 'lskirt_h_01_wj': NoeVec3((0.7853981852531433, -0.10471980273723602, -1.6929689645767212)), 'skirt_a_01_wj': NoeVec3((0.0, -0.0872664600610733, -1.570796012878418)), 
+    'skirt_b_01_wj': NoeVec3((-0.7853981852531433, -0.10471980273723602, -1.4660769701004028)), 'skirt_c_01_wj': NoeVec3((-1.570796012878418, 0.0, -1.3089970350265503)), 'skirt_c_02_wj': NoeVec3((0.0, 0.0872664600610733, 0.0)), 
+    'skirt_d_01_wj': NoeVec3((-2.3387410640716553, 0.1745329052209854, -1.3962630033493042)), 'skirt_e_01_wj': NoeVec3((0.0, 2.8797929286956787, 1.570796012878418)), 'skirt_e_02_wj': NoeVec3((0.0, 0.0872664600610733, 0.0)), 
+    'skirt_f_01_wj': NoeVec3((2.3387410640716553, 0.1745329052209854, -1.7453290224075317)), 'skirt_g_01_wj': NoeVec3((1.570796012878418, 0.0, -1.832595944404602)), 'skirt_g_02_wj': NoeVec3((0.0, 0.0872664600610733, 0.0)), 
+    'skirt_h_01_wj': NoeVec3((0.7853981852531433, -0.10471980273723602, -1.6755160093307495)), 'spine_wj': NoeVec3((0.0, 0.0, 1.570796012878418)), 'breast_c_wj': NoeVec3((0.0, 3.1415929794311523, 0.0)), 'breast_l_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 
+    'breast_r_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 'face_root': NoeVec3((0.0, 0.01745329052209854, 0.0)), 'hair_chara_root': NoeVec3((-0.01745329052209854, 0.0, -1.570796012878418)), 'hair_c_01_wj': NoeVec3((0.0, 0.0, -1.570796012878418)), 
+    'hair_l_01_wj': NoeVec3((-0.7853981852531433, 0.0872664600610733, -1.483530044555664)), 'hair_r_01_wj': NoeVec3((0.7853981852531433, 0.0872664600610733, -1.6580630540847778)), 'hairside_l_01_wj': NoeVec3((0.0, -0.0872664600610733, -1.6580630540847778)), 
+    'hairside_l_02_wj': NoeVec3((0.0, -0.2094395011663437, 0.0)), 'hairside_l_03_wj': NoeVec3((0.0, -0.3490658104419708, 0.0)), 'hairside_r_01_wj': NoeVec3((0.0, -0.0872664600610733, -1.483530044555664)), 'hairside_r_02_wj': NoeVec3((0.0, -0.2094395011663437, 0.0)), 
+    'hairside_r_03_wj': NoeVec3((0.0, -0.3490658104419708, 0.0)), 'hair_root': NoeVec3((-0.03490658104419708, 0.0, -1.570796012878418)), 'hairback_c_01_wj': NoeVec3((0.0, 3.054326057434082, 1.570796012878418)), 
+    'hairback_l_01_wj': NoeVec3((-2.5132739543914795, 0.1221729964017868, -1.483530044555664)), 'hairback_r_01_wj': NoeVec3((2.5132739543914795, 0.1221729964017868, -1.6580630540847778))},
+    'MIK': {'lskirt_a_01_wj': NoeVec3((0.0, -0.0872664600610733, -1.570796012878418)), 'lskirt_b_01_wj': NoeVec3((-0.7853981852531433, -0.10471980273723602, -1.4486229419708252)), 'lskirt_c_01_wj': NoeVec3((-1.570796012878418, 0.0, -1.3089970350265503)), 
+    'lskirt_d_01_wj': NoeVec3((-2.3387410640716553, 0.1745329052209854, -1.3962630033493042)), 'lskirt_e_01_wj': NoeVec3((0.0, 2.8797929286956787, 1.570796012878418)), 'lskirt_f_01_wj': NoeVec3((2.3387410640716553, 0.1745329052209854, -1.7453290224075317)), 
+    'lskirt_g_01_wj': NoeVec3((1.570796012878418, 0.0, -1.832595944404602)), 'lskirt_h_01_wj': NoeVec3((0.7853981852531433, -0.10471980273723602, -1.6929689645767212)), 'skirt_a_01_wj': NoeVec3((0.0, -0.0872664600610733, -1.570796012878418)), 
+    'skirt_b_01_wj': NoeVec3((-0.7853981852531433, -0.10471980273723602, -1.4660769701004028)), 'skirt_c_01_wj': NoeVec3((-1.570796012878418, 0.0, -1.3089970350265503)), 'skirt_c_02_wj': NoeVec3((0.0, 0.0872664600610733, 0.0)), 
+    'skirt_d_01_wj': NoeVec3((-2.3387410640716553, 0.1745329052209854, -1.3962630033493042)), 'skirt_e_01_wj': NoeVec3((0.0, 2.8797929286956787, 1.570796012878418)), 'skirt_f_01_wj': NoeVec3((2.3387410640716553, 0.1745329052209854, -1.7453290224075317)), 
+    'skirt_g_01_wj': NoeVec3((1.570796012878418, 0.0, -1.832595944404602)), 'skirt_g_02_wj': NoeVec3((0.0, 0.0872664600610733, 0.0)), 'skirt_h_01_wj': NoeVec3((0.7853981852531433, -0.10471980273723602, -1.6755160093307495)), 'spine_wj': NoeVec3((0.0, 0.0, 1.570796012878418)), 
+    'breast_c_wj': NoeVec3((0.0, 3.1415929794311523, 0.0)), 'breast_l_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 'breast_r_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 'face_root': NoeVec3((0.0, 0.01745329052209854, 0.0)), 
+    'hair_chara_root': NoeVec3((-0.01745329052209854, 0.0, -1.570796012878418)), 'hair_l1_01_wj': NoeVec3((0.0, -0.0872664600610733, -1.5184359550476074)), 'hair_l2_01_wj': NoeVec3((-0.6108651757240295, 0.0, -1.5184359550476074)), 
+    'hair_r1_01_wj': NoeVec3((0.0, -0.0872664600610733, -1.623155951499939)), 'hair_r2_01_wj': NoeVec3((0.6108651757240295, 0.0, -1.623155951499939)), 'hairside_l_01_wj': NoeVec3((-1.570796012878418, 0.0, -1.6580630540847778)), 
+    'hairside_l_02_wj': NoeVec3((0.0, 0.0872664600610733, -0.1745329052209854)), 'hairside_r_01_wj': NoeVec3((1.570796012878418, 0.0, -1.483530044555664)), 'hairside_r_02_wj': NoeVec3((0.0, 0.0872664600610733, 0.1745329052209854)), 
+    'hairtail_l_01_wj': NoeVec3((-2.4260079860687256, 0.10471980273723602, -1.3613569736480713)), 'hairtair_r_01_wj': NoeVec3((2.4260079860687256, 0.10471980273723602, -1.780236005783081)), 'hair_root': NoeVec3((-0.03490658104419708, 0.0, -1.570796012878418)), 
+    'hairback_c_01_wj': NoeVec3((3.1415929794311523, -0.0872664600610733, -1.570796012878418)), 'hairback_l_01_wj': NoeVec3((-2.530726909637451, -0.06981316953897476, -1.570796012878418)), 'hairback_r_01_wj': NoeVec3((2.530726909637451, -0.06981316953897476, -1.570796012878418))},
+    'MIM': {'lskirt_a_01_wj': NoeVec3((0.0, -0.0872664600610733, -1.570796012878418)), 'lskirt_b_01_wj': NoeVec3((-0.7863126993179321, -0.05095802992582321, -1.4288400411605835)), 'lskirt_c_01_wj': NoeVec3((-1.570796012878418, 0.0, -1.483530044555664)), 
+    'lskirt_d_01_wj': NoeVec3((-2.3508710861206055, 0.08307766914367676, -1.4905040264129639)), 'lskirt_e_01_wj': NoeVec3((0.0, 3.0019659996032715, 1.570796012878418)), 'lskirt_f_01_wj': NoeVec3((2.3508710861206055, 0.08307766914367676, -1.651087999343872)), 
+    'lskirt_g_01_wj': NoeVec3((1.570796012878418, 0.0, -1.6580630540847778)), 'lskirt_h_01_wj': NoeVec3((0.7863126993179321, -0.05095802992582321, -1.7127530574798584)), 'skirt_a_01_wj': NoeVec3((0.0, -0.05235987901687622, -1.570796012878418)), 
+    'skirt_b_01_wj': NoeVec3((-0.890117883682251, -0.06981316953897476, -1.483530044555664)), 'skirt_c_01_wj': NoeVec3((-1.570796012878418, 0.0, -1.326449990272522)), 'skirt_c_02_wj': NoeVec3((0.0, 0.13962629437446594, 0.0)), 
+    'skirt_d_01_wj': NoeVec3((0.7504916191101074, 3.0717790126800537, 1.6580630540847778)), 'skirt_e_01_wj': NoeVec3((0.0, 2.9845130443573, 1.570796012878418)), 'skirt_f_01_wj': NoeVec3((2.3911008834838867, 0.06981316953897476, -1.6580630540847778)), 
+    'skirt_g_01_wj': NoeVec3((1.570796012878418, 0.0, -1.815142035484314)), 'skirt_g_02_wj': NoeVec3((0.0, 0.13962629437446594, 0.0)), 'skirt_h_01_wj': NoeVec3((0.890117883682251, -0.06981316953897476, -1.6580630540847778)), 'spine_wj': NoeVec3((0.0, 0.0, 1.570796012878418)), 
+    'breast_c_wj': NoeVec3((0.0, 3.1415929794311523, 0.0)), 'breast_l_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 'breast_r_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 'face_root': NoeVec3((0.0, 0.01745329052209854, 0.0)), 
+    'hair_chara_root': NoeVec3((-0.01745329052209854, 0.0, -1.570796012878418)), 'hair_c_01_wj': NoeVec3((0.0, -0.2617993950843811, -1.570796012878418)), 'hair_l_01_wj': NoeVec3((0.0, 0.0872664600610733, -1.2217299938201904)), 'hair_r_01_wj': NoeVec3((0.0, 0.0872664600610733, -1.9198620319366455)), 
+    'hairback_c1_01_wj': NoeVec3((0.0, 2.967060089111328, 1.570796012878418)), 'hairdown_c1_03_wj': NoeVec3((0.0, 0.0872664600610733, 0.0)), 'hairdown_c1_04_wj': NoeVec3((0.0, 0.1745329052209854, 0.0)), 'ribbon_l_01_wj': NoeVec3((1.1519169807434082, -0.5148720741271973, -1.038470983505249)), 
+    'ribbon_r_01_wj': NoeVec3((-1.1519169807434082, -0.5148720741271973, 1.038470983505249)), 'hairback_l1_01_wj': NoeVec3((-1.570796012878418, 0.0, -0.6981316804885864)), 'hairback_l2_01_wj': NoeVec3((-2.0594890117645264, 0.6981316804885864, -0.6981316804885864)), 
+    'hairback_r1_01_wj': NoeVec3((1.570796012878418, 0.0, -2.4434609413146973)), 'hairback_r2_01_wj': NoeVec3((2.0594890117645264, 0.6981316804885864, -2.4434609413146973)), 'hairside_l_01_wj': NoeVec3((-1.2217299938201904, -0.1745329052209854, -2.007128953933716)), 
+    'hairside_r_01_wj': NoeVec3((1.2217299938201904, -0.1745329052209854, -1.1344640254974365)), 'hair_root': NoeVec3((-0.03490658104419708, 0.0, -1.570796012878418)), 'hairback_c_01_wj': NoeVec3((0.0, 3.054326057434082, 1.570796012878418)), 
+    'hairback_l_01_wj': NoeVec3((-2.5132739543914795, 0.1221729964017868, -1.483530044555664)), 'hairback_r_01_wj': NoeVec3((2.5132739543914795, 0.1221729964017868, -1.6580630540847778))},
+    'NOM': {'lskirt_a_01_wj': NoeVec3((0.0, -0.0872664600610733, -1.570796012878418)), 'lskirt_b_01_wj': NoeVec3((-0.7853981852531433, -0.10471980273723602, -1.4486229419708252)), 'lskirt_c_01_wj': NoeVec3((-1.570796012878418, 0.0, -1.3089970350265503)), 
+    'lskirt_d_01_wj': NoeVec3((-2.3387410640716553, 0.1745329052209854, -1.3962630033493042)), 'lskirt_e_01_wj': NoeVec3((0.0, 2.8797929286956787, 1.570796012878418)), 'lskirt_f_01_wj': NoeVec3((2.3387410640716553, 0.1745329052209854, -1.7453290224075317)), 
+    'lskirt_g_01_wj': NoeVec3((1.570796012878418, 0.0, -1.832595944404602)), 'lskirt_h_01_wj': NoeVec3((0.7853981852531433, -0.10471980273723602, -1.6929689645767212)), 'skirt_a_01_wj': NoeVec3((0.0, -0.029670599848031998, -1.570796012878418)), 
+    'skirt_b_01_wj': NoeVec3((-0.7801622152328491, 0.0, -1.4486229419708252)), 'skirt_c_01_wj': NoeVec3((-1.570796012878418, 0.06283185631036758, -1.274090051651001)), 'skirt_c_02_wj': NoeVec3((0.0, 0.0872664600610733, 0.0)), 
+    'skirt_d_01_wj': NoeVec3((-2.268928050994873, 0.3141593039035797, -1.326449990272522)), 'skirt_d_02_wj': NoeVec3((0.0, 0.1221729964017868, 0.0)), 'skirt_e_01_wj': NoeVec3((0.0, 2.757620096206665, 1.570796012878418)), 'skirt_e_02_wj': NoeVec3((0.0, 0.13962629437446594, 0.0)), 
+    'skirt_f_01_wj': NoeVec3((2.268928050994873, 0.3141593039035797, -1.815142035484314)), 'skirt_f_02_wj': NoeVec3((0.0, 0.1221729964017868, 0.0)), 'skirt_g_01_wj': NoeVec3((1.570796012878418, 0.06283185631036758, -1.867501974105835)), 'skirt_g_02_wj': NoeVec3((0.0, 0.0872664600610733, 0.0)), 
+    'skirt_h_01_wj': NoeVec3((0.7801622152328491, 0.0, -1.6929689645767212)), 'spine_wj': NoeVec3((0.0, 0.0, 1.570796012878418)), 'breast_c_wj': NoeVec3((0.0, 3.1415929794311523, 0.0)), 'breast_l_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 
+    'breast_r_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 'face_root': NoeVec3((0.0, 0.01745329052209854, 0.0)), 'hair_chara_root': NoeVec3((-0.01745329052209854, 0.0, -1.570796012878418)), 'hair_c_01_wj': NoeVec3((0.0, 0.033161260187625885, -1.570796012878418)), 
+    'hair_l_01_wj': NoeVec3((-0.7853981852531433, 0.1745329052209854, -1.3089970350265503)), 'hair_r_01_wj': NoeVec3((0.7853981852531433, 0.1745329052209854, -1.832595944404602)), 'hairside_l_01_wj': NoeVec3((-1.570796012878418, -0.3665192127227783, -1.8500490188598633)), 
+    'hairside_r_01_wj': NoeVec3((1.570796012878418, -0.3665192127227783, -1.291543960571289)), 'hairtop_01_wj': NoeVec3((-1.570796012878418, 0.15707960724830627, 0.9075711965560913)), 'hair_root': NoeVec3((-0.03490658104419708, 0.0, -1.570796012878418)), 
+    'hairback_c_01_wj': NoeVec3((0.0, 3.3161261081695557, 1.570796012878418)), 'hairback_c_02_wj': NoeVec3((0.0, -0.3490658104419708, 0.0)), 'hairback_l_01_wj': NoeVec3((-2.5132739543914795, -0.0872664600610733, -1.780236005783081)), 'hairback_l_02_wj': NoeVec3((0.0, -0.471238911151886, 0.0)), 
+    'hairback_r_01_wj': NoeVec3((2.5132739543914795, -0.0872664600610733, -1.3613569736480713)), 'hairback_r_02_wj': NoeVec3((0.0, -0.471238911151886, 0.0))},
+    'NOR': {'lskirt_a_01_wj': NoeVec3((0.0, -0.0872664600610733, -1.570796012878418)), 'lskirt_b_01_wj': NoeVec3((-0.7853981852531433, -0.10471980273723602, -1.4486229419708252)), 'lskirt_c_01_wj': NoeVec3((-1.570796012878418, 0.0, -1.3089970350265503)), 
+    'lskirt_d_01_wj': NoeVec3((-2.3387410640716553, 0.1745329052209854, -1.3962630033493042)), 'lskirt_e_01_wj': NoeVec3((0.0, 2.8797929286956787, 1.570796012878418)), 'lskirt_f_01_wj': NoeVec3((2.3387410640716553, 0.1745329052209854, -1.7453290224075317)), 
+    'lskirt_g_01_wj': NoeVec3((1.570796012878418, 0.0, -1.832595944404602)), 'lskirt_h_01_wj': NoeVec3((0.7853981852531433, -0.10471980273723602, -1.6929689645767212)), 'skirt_a_01_wj': NoeVec3((0.0, -0.04553563892841339, -1.570796012878418)), 
+    'skirt_a_02_wj': NoeVec3((0.0011170109501108527, 0.029094640165567398, 0.024609139189124107)), 'skirt_b_01_wj': NoeVec3((-0.7853981852531433, 0.06478662043809891, -1.3539040088653564)), 'skirt_b_02_wj': NoeVec3((0.002844887087121606, 0.03867650032043457, -0.04623376950621605)), 
+    'skirt_c_01_wj': NoeVec3((-1.704906940460205, 0.060388389974832535, -1.1502070426940918)), 'skirt_c_02_wj': NoeVec3((-0.17957690358161926, 0.0768992081284523, 0.0679805725812912)), 'skirt_d_01_wj': NoeVec3((-2.4367239475250244, 0.30885350704193115, -1.3177759647369385)), 
+    'skirt_d_02_wj': NoeVec3((-0.35304519534111023, 0.18828609585762024, 0.08299040794372559)), 'skirt_e_01_wj': NoeVec3((0.0, 2.766922950744629, 1.570796012878418)), 'skirt_e_02_wj': NoeVec3((0.0, 0.1318770945072174, 0.0)), 
+    'skirt_f_01_wj': NoeVec3((2.33034610748291, 0.36713001132011414, -1.9322019815444946)), 'skirt_f_02_wj': NoeVec3((0.1995784044265747, 0.25588271021842957, -0.05820672959089279)), 'skirt_g_01_wj': NoeVec3((1.570796012878418, 0.19369660317897797, -2.007581949234009)), 
+    'skirt_g_02_wj': NoeVec3((-0.011536629870533943, 0.1123816967010498, 0.09119345247745514)), 'skirt_h_01_wj': NoeVec3((0.7853981852531433, -0.05372123047709465, -1.8072010278701782)), 'skirt_h_02_wj': NoeVec3((-0.0024260079953819513, 0.17758730053901672, -0.010245080105960369)), 
+    'spine_wj': NoeVec3((0.0, 0.0, 1.570796012878418)), 'breast_c_wj': NoeVec3((0.0, 3.1415929794311523, 0.0)), 'breast_l_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 'breast_r_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 
+    'face_root': NoeVec3((0.0, 0.01745329052209854, 0.0)), 'hair_chara_root': NoeVec3((-0.01745329052209854, 0.0, -1.570796012878418)), 'hair_c_01_wj': NoeVec3((0.0, -0.15707960724830627, -1.570796012878418)), 'hair_l_01_wj': NoeVec3((-0.820304811000824, -0.01745329052209854, -1.5009829998016357)), 
+    'hair_r_01_wj': NoeVec3((0.820304811000824, 0.01745329052209854, -1.6406099796295166)), 'hair_tail_back_l_02_wj': NoeVec3((0.3366740047931671, 2.594413995742798, 1.7509139776229858)), 'hair_tail_back_l_03_wj': NoeVec3((0.1593136042356491, 0.06590362638235092, -0.09307841211557388)), 
+    'hair_tail_back_l_04_wj': NoeVec3((-0.044174280017614365, 0.16758650541305542, 0.0172787606716156)), 'hair_tail_back_l_05_wj': NoeVec3((-0.21706660091876984, 0.2978579103946686, 0.011641349643468857)), 'hair_tail_back_l_06_wj': NoeVec3((0.0, 0.44687411189079285, 0.011205010116100311)), 
+    'hair_tail_back_r_02_wj': NoeVec3((2.742418050765991, 0.5440714955329895, -1.785768985748291)), 'hair_tail_back_r_03_wj': NoeVec3((-0.0743335708975792, 0.0777893215417862, 0.042987458407878876)), 'hair_tail_back_r_04_wj': NoeVec3((-0.07822565734386444, 0.14350099861621857, 0.0316777303814888)), 
+    'hair_tail_back_r_05_wj': NoeVec3((0.0, 0.3358187973499298, -0.05794493108987808)), 'hair_tail_back_r_06_wj': NoeVec3((0.0, 0.40083229541778564, 0.18015289306640625)), 'hair_tail_front_l_02_wj': NoeVec3((-0.31581729650497437, -0.9572781920433044, -1.309730052947998)), 
+    'hair_tail_front_l_03_wj': NoeVec3((-0.06195918843150139, 0.08918633311986923, 0.08691740036010742)), 'hair_tail_front_l_04_wj': NoeVec3((-0.03153809905052185, 0.4147076904773712, 0.023265240713953972)), 'hair_tail_front_l_05_wj': NoeVec3((0.26253241300582886, 0.29536208510398865, -0.055798180401325226)), 
+    'hair_tail_front_l_06_wj': NoeVec3((0.0, 0.3816685974597931, -0.10154329985380173)), 'hair_tail_front_r_02_wj': NoeVec3((0.3750537931919098, -0.9504889249801636, -1.8808189630508423)), 'hair_tail_front_r_03_wj': NoeVec3((0.024731319397687912, 0.09452704340219498, -0.03471459820866585)), 
+    'hair_tail_front_r_04_wj': NoeVec3((0.10534810274839401, 0.40137338638305664, -0.07908085733652115)), 'hair_tail_front_r_05_wj': NoeVec3((-0.5449615716934204, 0.3283661901950836, 0.11393509805202484)), 'hair_tail_front_r_06_wj': NoeVec3((0.0, 0.3606024980545044, 0.124965600669384)), 
+    'hairside_l_01_wj': NoeVec3((-1.570796012878418, -0.0872664600610733, -1.535889983177185)), 'hairside_l_02_wj': NoeVec3((-0.101351298391819, 0.39620721340179443, -0.17039650678634644)), 'hairside_r_01_wj': NoeVec3((1.570796012878418, -0.0872664600610733, -1.6755160093307495)), 
+    'hairside_r_02_wj': NoeVec3((0.1482831984758377, 0.6040583848953247, 0.16990779340267181)), 'hairtwintail_l_01_wj': NoeVec3((-1.570796012878418, 0.02652899920940399, -1.4872469902038574)), 'hairtwintail_r_01_wj': NoeVec3((1.570796012878418, 0.026406830176711082, -1.6521639823913574)), 
+    'hair_root': NoeVec3((-0.03490658104419708, 0.0, -1.570796012878418)), 'hairback_c_01_wj': NoeVec3((0.0, 2.897247076034546, 1.570796012878418)), 'hairback_c_02_wj': NoeVec3((0.0, -0.10471980273723602, 0.0)), 'hairback_c_03_wj': NoeVec3((0.0, 0.1221729964017868, 0.0)), 
+    'hairback_c_04_wj': NoeVec3((0.0, 0.24434609711170197, 0.0)), 'hairback_l_01_wj': NoeVec3((-2.4436349868774414, 0.2967059910297394, -1.3439040184020996)), 'hairback_l_02_wj': NoeVec3((0.0015707960119470954, -0.09433504939079285, -0.0007330382941290736)), 
+    'hairback_l_03_wj': NoeVec3((0.00783652812242508, 0.08546877652406693, -0.0031241390388458967)), 'hairback_l_04_wj': NoeVec3((0.168721005320549, 0.2929185926914215, -0.01340413000434637)), 'hairback_r_01_wj': NoeVec3((2.4436349868774414, 0.2967059910297394, -1.7976889610290527)), 
+    'hairback_r_02_wj': NoeVec3((-0.0015707960119470954, -0.09433504939079285, 0.0007330382941290736)), 'hairback_r_03_wj': NoeVec3((-0.00783652812242508, 0.08546877652406693, 0.0031241390388458967)), 'hairback_r_04_wj': NoeVec3((-0.168721005320549, 0.2929185926914215, 0.01340413000434637))},
+    'NOY': {'lskirt_a_01_wj': NoeVec3((0.0, -0.0872664600610733, -1.570796012878418)), 'lskirt_b_01_wj': NoeVec3((-0.7853981852531433, -0.10471980273723602, -1.4486229419708252)), 'lskirt_c_01_wj': NoeVec3((-1.570796012878418, 0.0, -1.3089970350265503)), 
+    'lskirt_d_01_wj': NoeVec3((-2.3387410640716553, 0.1745329052209854, -1.3962630033493042)), 'lskirt_e_01_wj': NoeVec3((0.0, 2.8797929286956787, 1.570796012878418)), 'lskirt_f_01_wj': NoeVec3((2.3387410640716553, 0.1745329052209854, -1.7453290224075317)), 
+    'lskirt_g_01_wj': NoeVec3((1.570796012878418, 0.0, -1.832595944404602)), 'lskirt_h_01_wj': NoeVec3((0.7853981852531433, -0.10471980273723602, -1.6929689645767212)), 'skirt_a_01_wj': NoeVec3((0.0, -0.6108651757240295, -1.570796012878418)), 'skirt_a_02_wj': NoeVec3((0.0, 0.1745329052209854, 0.0)), 
+    'skirt_b_01_wj': NoeVec3((-0.9299113750457764, -0.5005429983139038, -0.9985203146934509)), 'skirt_b_02_wj': NoeVec3((0.0, 0.2617993950843811, 0.0)), 'skirt_c_01_wj': NoeVec3((-1.570796012878418, 0.0, -0.6981316804885864)), 'skirt_c_02_wj': NoeVec3((0.0, 0.2617993950843811, 0.0)), 
+    'skirt_d_01_wj': NoeVec3((-2.1474881172180176, 0.5640711784362793, -0.8862032294273376)), 'skirt_d_02_wj': NoeVec3((0.0, 0.2617993950843811, 0.0)), 'skirt_e_01_wj': NoeVec3((0.0, 2.268928050994873, 1.570796012878418)), 'skirt_e_02_wj': NoeVec3((0.0, 0.3490658104419708, 0.0)), 
+    'skirt_f_01_wj': NoeVec3((2.1474881172180176, 0.5640711784362793, -2.2553839683532715)), 'skirt_f_02_wj': NoeVec3((0.0, 0.2617993950843811, 0.0)), 'skirt_g_01_wj': NoeVec3((1.570796012878418, 0.0, -2.4434609413146973)), 'skirt_g_02_wj': NoeVec3((0.0, 0.2617993950843811, 0.0)), 
+    'skirt_h_01_wj': NoeVec3((0.9299113750457764, -0.5005412101745605, -2.1430718898773193)), 'skirt_h_02_wj': NoeVec3((0.0, 0.2617993950843811, 0.0)), 'spine_wj': NoeVec3((0.0, 0.0, 1.570796012878418)), 'breast_c_wj': NoeVec3((0.0, 3.1415929794311523, 0.0)), 
+    'breast_l_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 'breast_r_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 'face_root': NoeVec3((0.0, 0.01745329052209854, 0.0)), 'hair_chara_root': NoeVec3((-0.01745329052209854, 0.0, -1.570796012878418)), 
+    'hair_c_01_wj': NoeVec3((0.0, -0.15707960724830627, -1.570796012878418)), 'hair_l_01_wj': NoeVec3((-0.820304811000824, -0.01745329052209854, -1.5009829998016357)), 'hair_r_01_wj': NoeVec3((0.820304811000824, 0.01745329052209854, -1.6406099796295166)), 
+    'hairside_l_01_wj': NoeVec3((-1.570796012878418, -0.0872664600610733, -1.535889983177185)), 'hairside_l_02_wj': NoeVec3((-0.101351298391819, 0.39620721340179443, -0.17039650678634644)), 'hairside_r_01_wj': NoeVec3((1.570796012878418, -0.0872664600610733, -1.6755160093307495)), 
+    'hairside_r_02_wj': NoeVec3((0.1482831984758377, 0.6040583848953247, 0.16990779340267181)), 'hairtwintail_l_01_wj': NoeVec3((-1.570796012878418, 0.10471980273723602, -1.239184021949768)), 'hairtwintail_l_02_wj': NoeVec3((-0.03438299149274826, -0.1414414942264557, 0.13459980487823486)), 
+    'hairtwintail_l_03_wj': NoeVec3((0.004834562074393034, 0.019582590088248253, 0.005550147034227848)), 'hairtwintail_l_04_wj': NoeVec3((-0.07045894116163254, 0.6283184885978699, -0.36189401149749756)), 'hairtwintail_r_01_wj': NoeVec3((1.570796012878418, 0.10471980273723602, -1.9024089574813843)), 
+    'hairtwintail_r_02_wj': NoeVec3((0.03438299149274826, -0.1414414942264557, -0.13459980487823486)), 'hairtwintail_r_03_wj': NoeVec3((-0.004834562074393034, 0.019582590088248253, -0.005550147034227848)), 'hairtwintail_r_04_wj': NoeVec3((0.07045894116163254, 0.6283184885978699, 0.36189401149749756)), 
+    'hair_root': NoeVec3((-0.03490658104419708, 0.0, -1.570796012878418)), 'hairback_c_01_wj': NoeVec3((0.0, 2.897247076034546, 1.570796012878418)), 'hairback_c_02_wj': NoeVec3((0.0, -0.10471980273723602, 0.0)), 'hairback_c_03_wj': NoeVec3((0.0, 0.1221729964017868, 0.0)), 
+    'hairback_c_04_wj': NoeVec3((0.0, 0.24434609711170197, 0.0)), 'hairback_l_01_wj': NoeVec3((-2.4436349868774414, 0.2967059910297394, -1.3439040184020996)), 'hairback_l_02_wj': NoeVec3((0.0015707960119470954, -0.09433504939079285, -0.0007330382941290736)), 
+    'hairback_l_03_wj': NoeVec3((0.00783652812242508, 0.08546877652406693, -0.0031241390388458967)), 'hairback_l_04_wj': NoeVec3((0.168721005320549, 0.2929185926914215, -0.01340413000434637)), 'hairback_r_01_wj': NoeVec3((2.4436349868774414, 0.2967059910297394, -1.7976889610290527)), 
+    'hairback_r_02_wj': NoeVec3((-0.0015707960119470954, -0.09433504939079285, 0.0007330382941290736)), 'hairback_r_03_wj': NoeVec3((-0.00783652812242508, 0.08546877652406693, 0.0031241390388458967)), 'hairback_r_04_wj': NoeVec3((-0.168721005320549, 0.2929185926914215, 0.01340413000434637))},
+    'NYC': {'lskirt_a_01_wj': NoeVec3((0.0, -0.0872664600610733, -1.570796012878418)), 'lskirt_b_01_wj': NoeVec3((-0.7853981852531433, -0.10471980273723602, -1.4486229419708252)), 'lskirt_c_01_wj': NoeVec3((-1.570796012878418, 0.0, -1.3089970350265503)), 
+    'lskirt_d_01_wj': NoeVec3((-2.3387410640716553, 0.1745329052209854, -1.3962630033493042)), 'lskirt_e_01_wj': NoeVec3((0.0, 2.8797929286956787, 1.570796012878418)), 'lskirt_f_01_wj': NoeVec3((2.3387410640716553, 0.1745329052209854, -1.7453290224075317)), 
+    'lskirt_g_01_wj': NoeVec3((1.570796012878418, 0.0, -1.832595944404602)), 'lskirt_h_01_wj': NoeVec3((0.7853981852531433, -0.10471980273723602, -1.6929689645767212)), 'skirt_a_01_wj': NoeVec3((0.0, -0.02617993950843811, -1.570796012878418)), 
+    'skirt_b_01_wj': NoeVec3((-0.6038839221000671, 0.003490658011287451, -1.3962630033493042)), 'skirt_c_01_wj': NoeVec3((-1.570796012878418, 0.06108652055263519, -1.291543960571289)), 'skirt_c_02_wj': NoeVec3((0.0, -0.006283184979110956, 0.0)), 
+    'skirt_d_01_wj': NoeVec3((-2.5010569095611572, 0.3665192127227783, -1.3089970350265503)), 'skirt_d_02_wj': NoeVec3((0.0, 0.09948377311229706, 0.0)), 'skirt_e_01_wj': NoeVec3((0.0, 2.7052600383758545, 1.570796012878418)), 'skirt_e_02_wj': NoeVec3((0.0, 0.09075711667537689, 0.0)), 
+    'skirt_f_01_wj': NoeVec3((2.5010569095611572, 0.3665192127227783, -1.832595944404602)), 'skirt_f_02_wj': NoeVec3((0.0, 0.09948377311229706, 0.0)), 'skirt_g_01_wj': NoeVec3((1.570796012878418, 0.06108652055263519, -1.8500490188598633)), 'skirt_g_02_wj': NoeVec3((0.0, -0.006283184979110956, 0.0)), 
+    'skirt_h_01_wj': NoeVec3((0.6038839221000671, 0.003490658011287451, -1.7453290224075317)), 'spine_wj': NoeVec3((0.0, 0.0, 1.570796012878418)), 'breast_c_wj': NoeVec3((0.0, 3.1415929794311523, 0.0)), 'breast_l_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 
+    'breast_r_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 'face_root': NoeVec3((0.0, 0.01745329052209854, 0.0)), 'hair_chara_root': NoeVec3((-0.01745329052209854, 0.0, -1.570796012878418)), 'hair_c_01_wj': NoeVec3((0.006108651868999004, 0.03490658104419708, -1.3997540473937988)), 
+    'hair_l_01_wj': NoeVec3((-1.0995570421218872, 0.30368730425834656, -1.3962630033493042)), 'hair_r_01_wj': NoeVec3((1.0995570421218872, 0.30368730425834656, -1.7453290224075317)), 'hair_twintail_l_01_wj': NoeVec3((-2.124066114425659, 0.22689279913902283, -1.36484694480896)), 
+    'hair_twintail_l_02_wj': NoeVec3((0.0, 0.016057029366493225, -0.02042035013437271)), 'hair_twintail_l_03_wj': NoeVec3((0.0, -0.06178465113043785, -0.08028514683246613)), 'hair_twintail_l_04_wj': NoeVec3((0.0, -0.027925269678235054, -0.006108651868999004)), 
+    'hair_twintail_r_01_wj': NoeVec3((2.124066114425659, 0.22689279913902283, -1.7767449617385864)), 'hair_twintail_r_02_wj': NoeVec3((0.0, 0.016057029366493225, 0.02042035013437271)), 'hair_twintail_r_03_wj': NoeVec3((0.0, -0.06178465113043785, 0.08028514683246613)), 
+    'hair_twintail_r_04_wj': NoeVec3((0.0, -0.027925269678235054, 0.006108651868999004)), 'hairside_l_01_wj': NoeVec3((0.003490658011287451, -0.10122910141944885, -1.84306800365448)), 'hairside_r_01_wj': NoeVec3((0.003490658011287451, -0.10122910141944885, -1.2985249757766724)), 
+    'hair_root': NoeVec3((-0.03490658104419708, 0.0, -1.570796012878418)), 'hairback_c_01_wj': NoeVec3((0.0, 3.054326057434082, 1.570796012878418)), 'hairback_l_01_wj': NoeVec3((-2.5132739543914795, 0.1221729964017868, -1.483530044555664)), 
+    'hairback_r_01_wj': NoeVec3((2.5132739543914795, 0.1221729964017868, -1.6580630540847778))},
+    'NYN': {'lskirt_a_01_wj': NoeVec3((0.0, -0.0872664600610733, -1.570796012878418)), 'lskirt_b_01_wj': NoeVec3((-0.7853981852531433, -0.10471980273723602, -1.4486229419708252)), 'lskirt_c_01_wj': NoeVec3((-1.570796012878418, 0.0, -1.3089970350265503)), 
+    'lskirt_d_01_wj': NoeVec3((-2.3387410640716553, 0.1745329052209854, -1.3962630033493042)), 'lskirt_e_01_wj': NoeVec3((0.0, 2.8797929286956787, 1.570796012878418)), 'lskirt_f_01_wj': NoeVec3((2.3387410640716553, 0.1745329052209854, -1.7453290224075317)), 
+    'lskirt_g_01_wj': NoeVec3((1.570796012878418, 0.0, -1.832595944404602)), 'lskirt_h_01_wj': NoeVec3((0.7853981852531433, -0.10471980273723602, -1.6929689645767212)), 'skirt_a_01_wj': NoeVec3((0.0, -0.2111847996711731, -1.570796012878418)), 
+    'skirt_b_01_wj': NoeVec3((-0.44505900144577026, -0.15358899533748627, -1.3002699613571167)), 'skirt_c_01_wj': NoeVec3((-1.565559983253479, 0.04712389037013054, -1.0035640001296997)), 'skirt_c_02_wj': NoeVec3((0.0, 0.11344639956951141, 0.0)), 
+    'skirt_d_01_wj': NoeVec3((-2.509783983230591, 0.4206242859363556, -1.1868239641189575)), 'skirt_d_02_wj': NoeVec3((0.006981316953897476, 0.179768905043602, 0.040142569690942764)), 'skirt_e_01_wj': NoeVec3((0.0, 2.630211114883423, 1.570796012878418)), 
+    'skirt_e_02_wj': NoeVec3((0.0, 0.18849560618400574, 0.0)), 'skirt_f_01_wj': NoeVec3((2.509783983230591, 0.4206242859363556, -1.9547690153121948)), 'skirt_f_02_wj': NoeVec3((0.006981316953897476, 0.179768905043602, -0.040142569690942764)), 
+    'skirt_g_01_wj': NoeVec3((1.565559983253479, 0.04712389037013054, -2.1380279064178467)), 'skirt_g_02_wj': NoeVec3((0.0, 0.11344639956951141, 0.0)), 'skirt_h_01_wj': NoeVec3((0.44505900144577026, -0.15358899533748627, -1.8413219451904297)), 'spine_wj': NoeVec3((0.0, 0.0, 1.570796012878418)), 
+    'breast_l_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 'breast_r_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 'face_root': NoeVec3((0.0, 0.01745329052209854, 0.0)), 'hair_chara_root': NoeVec3((-0.01745329052209854, 0.0, -1.570796012878418)), 
+    'hair_c_01_wj': NoeVec3((0.0, 0.09767437726259232, -1.570796012878418)), 'hair_l_01_wj': NoeVec3((0.0010048539843410254, 0.04330616071820259, -1.570796012878418)), 'hair_r_01_wj': NoeVec3((-0.0010048559634014964, 0.04330616071820259, -1.570796012878418)), 
+    'hairside_l_01_wj': NoeVec3((-0.0009653572924435139, -0.01598108932375908, -1.6493359804153442)), 'hairside_l_02_wj': NoeVec3((-0.03816493973135948, -0.4148840010166168, 0.0890117883682251)), 'hairside_l_03_wj': NoeVec3((-0.01660322956740856, 0.00170920102391392, 0.179768905043602)), 
+    'hairside_l_04_wj': NoeVec3((-0.12392059713602066, 0.4710626006126404, -0.10411690175533295)), 'hairside_r_01_wj': NoeVec3((0.0009653589804656804, -0.015981070697307587, -1.492256999015808)), 'hairside_r_02_wj': NoeVec3((0.03816493973135948, -0.4148840010166168, -0.0890117883682251)), 
+    'hairside_r_03_wj': NoeVec3((0.01660322956740856, 0.00170920102391392, -0.179768905043602)), 'hairside_r_04_wj': NoeVec3((0.12392059713602066, 0.4710626006126404, 0.10411690175533295)), 'hairtop_01_wj': NoeVec3((1.7505650520324707, 0.16755160689353943, 1.6929689645767212)), 
+    'hairtop_02_wj': NoeVec3((0.14419250190258026, 0.4321574866771698, 0.2857086956501007)), 'hairtop_03_wj': NoeVec3((0.2977462112903595, 0.8266630172729492, 0.3958877921104431)), 'hairtop_04_wj': NoeVec3((0.060850560665130615, 0.49440810084342957, 0.1276984065771103)), 
+    'hairtop_05_wj': NoeVec3((0.019634079188108444, 0.42486900091171265, 0.049438539892435074)), 'hairtop_06_wj': NoeVec3((-0.12645310163497925, 0.24964669346809387, -0.048882659524679184)), 'hairtop_07_wj': NoeVec3((-0.019541749730706215, 0.37564370036125183, -0.0532224215567112)), 
+    'hairtop_08_wj': NoeVec3((0.002782962052151561, 0.5341789722442627, 0.005466004833579063)), 'hair_root': NoeVec3((0.0, 0.0, -1.570796012878418)), 'hairback_c_01_wj': NoeVec3((0.0, 2.956850051879883, 1.570796012878418)), 'hairback_c_02_wj': NoeVec3((0.0, -0.0952436625957489, 0.0)), 
+    'hairback_c_03_wj': NoeVec3((0.0, 0.11361829936504364, 0.0)), 'hairback_c_04_wj': NoeVec3((0.0, 0.23430870473384857, 0.0)), 'hairback_l_01_wj': NoeVec3((-2.5132739543914795, 0.19198620319366455, -1.3788100481033325)), 'hairback_l_02_wj': NoeVec3((0.0, -0.04712389037013054, -0.029670599848031998)), 
+    'hairback_l_03_wj': NoeVec3((0.0, -0.04363323003053665, 0.013962630182504654)), 'hairback_l_04_wj': NoeVec3((0.0, 0.1745329052209854, -0.10471980273723602)), 'hairback_r_01_wj': NoeVec3((2.5132739543914795, 0.19198620319366455, -1.7627830505371094)), 
+    'hairback_r_02_wj': NoeVec3((0.0, -0.04712389037013054, 0.029670599848031998)), 'hairback_r_03_wj': NoeVec3((0.0, -0.04363323003053665, -0.013962630182504654)), 'hairback_r_04_wj': NoeVec3((0.0, 0.1745329052209854, 0.10471980273723602))},
+    'NYT': {'lskirt_a_01_wj': NoeVec3((0.0, -0.0872664600610733, -1.570796012878418)), 'lskirt_b_01_wj': NoeVec3((-0.7853981852531433, -0.10471980273723602, -1.4486229419708252)), 'lskirt_c_01_wj': NoeVec3((-1.570796012878418, 0.0, -1.3089970350265503)), 
+    'lskirt_d_01_wj': NoeVec3((-2.3387410640716553, 0.1745329052209854, -1.3962630033493042)), 'lskirt_e_01_wj': NoeVec3((0.0, 2.8797929286956787, 1.570796012878418)), 'lskirt_f_01_wj': NoeVec3((2.3387410640716553, 0.1745329052209854, -1.7453290224075317)), 
+    'lskirt_g_01_wj': NoeVec3((1.570796012878418, 0.0, -1.832595944404602)), 'lskirt_h_01_wj': NoeVec3((0.7853981852531433, -0.10471980273723602, -1.6929689645767212)), 'skirt_a_01_wj': NoeVec3((0.0, -0.13613569736480713, -1.570796012878418)), 
+    'skirt_b_01_wj': NoeVec3((-0.6038839221000671, -0.05585053935647011, -1.3543750047683716)), 'skirt_c_01_wj': NoeVec3((-1.5725419521331787, 0.15184369683265686, -1.2269669771194458)), 'skirt_c_02_wj': NoeVec3((0.0, -0.006283184979110956, 0.0)), 
+    'skirt_d_01_wj': NoeVec3((-2.495820999145508, 0.359537810087204, -1.3124879598617554)), 'skirt_d_02_wj': NoeVec3((0.0, 0.09948377311229706, 0.0)), 'skirt_e_01_wj': NoeVec3((0.0, 2.6947879791259766, 1.570796012878418)), 
+    'skirt_e_02_wj': NoeVec3((0.0, 0.09075711667537689, 0.0)), 'skirt_f_01_wj': NoeVec3((2.495820999145508, 0.359537810087204, -1.829105019569397)), 'skirt_f_02_wj': NoeVec3((0.0, 0.09948377311229706, 0.0)), 'skirt_g_01_wj': NoeVec3((1.5725419521331787, 0.15184369683265686, -1.9146260023117065)), 
+    'skirt_g_02_wj': NoeVec3((0.0, -0.006283184979110956, 0.0)), 'skirt_h_01_wj': NoeVec3((0.6038839221000671, -0.05585053935647011, -1.7872170209884644)), 'spine_wj': NoeVec3((0.0, 0.0, 1.570796012878418)), 'breast_c_wj': NoeVec3((0.0, 3.1415929794311523, 0.0)), 
+    'breast_l_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 'breast_r_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 'face_root': NoeVec3((0.0, 0.01745329052209854, 0.0)), 'hair_chara_root': NoeVec3((-0.01745329052209854, 0.0, -1.570796012878418)), 
+    'hair_c_01_wj': NoeVec3((0.0, -0.05585053935647011, -1.4206980466842651)), 'hair_l_01_wj': NoeVec3((-1.0995570421218872, 0.22165679931640625, -1.3788100481033325)), 'hair_l_side_01_wj': NoeVec3((-1.579522967338562, 0.11588989943265915, -1.4189529418945312)), 
+    'hair_ponytail_01_wj': NoeVec3((0.0, 2.9949851036071777, 1.570796012878418)), 'hair_ponytail_02_wj': NoeVec3((0.0, 0.17627820372581482, 0.0)), 'hair_r_01_wj': NoeVec3((1.0995570421218872, 0.22165679931640625, -1.7627830505371094)), 
+    'hair_r_side_01_wj': NoeVec3((1.579522967338562, 0.11588989943265915, -1.722640037536621)), 'hairside_l_01_wj': NoeVec3((-0.003490658011287451, -0.19547690451145172, -1.7976889610290527)), 'hairside_r_01_wj': NoeVec3((0.003490658011287451, -0.19547690451145172, -1.3439040184020996)), 
+    'hair_root': NoeVec3((-0.03490658104419708, 0.0, -1.570796012878418)), 'hairback_c_01_wj': NoeVec3((0.0, 3.054326057434082, 1.570796012878418)), 'hairback_l_01_wj': NoeVec3((-2.5132739543914795, 0.1221729964017868, -1.483530044555664)), 
+    'hairback_r_01_wj': NoeVec3((2.5132739543914795, 0.1221729964017868, -1.6580630540847778))},
+    'TSA': {'lskirt_a_01_wj': NoeVec3((0.0, -0.0872664600610733, -1.570796012878418)), 'lskirt_b_01_wj': NoeVec3((-0.7853981852531433, -0.10471980273723602, -1.4486229419708252)), 'lskirt_c_01_wj': NoeVec3((-1.570796012878418, 0.0, -1.3089970350265503)), 
+    'lskirt_d_01_wj': NoeVec3((-2.3387410640716553, 0.1745329052209854, -1.3962630033493042)), 'lskirt_e_01_wj': NoeVec3((0.0, 2.8797929286956787, 1.570796012878418)), 'lskirt_f_01_wj': NoeVec3((2.3387410640716553, 0.1745329052209854, -1.7453290224075317)), 
+    'lskirt_g_01_wj': NoeVec3((1.570796012878418, 0.0, -1.832595944404602)), 'lskirt_h_01_wj': NoeVec3((0.7853981852531433, -0.10471980273723602, -1.6929689645767212)), 'skirt_a_01_wj': NoeVec3((0.0, -0.15707960724830627, -1.570796012878418)), 'skirt_a_02_wj': NoeVec3((0.0, -0.03490658104419708, 0.0)), 
+    'skirt_b_01_wj': NoeVec3((-0.7853981852531433, -0.13962629437446594, -1.3439040184020996)), 'skirt_b_02_wj': NoeVec3((0.0, -0.03490658104419708, 0.0)), 'skirt_c_01_wj': NoeVec3((-1.570796012878418, 0.05235987901687622, -1.2217299938201904)), 'skirt_c_02_wj': NoeVec3((0.0, -0.15707960724830627, 0.0)), 
+    'skirt_d_01_wj': NoeVec3((-2.303834915161133, 0.2967059910297394, -1.2566369771957397)), 'skirt_e_01_wj': NoeVec3((0.0, 2.792526960372925, 1.570796012878418)), 'skirt_f_01_wj': NoeVec3((2.303834915161133, 0.2967059910297394, -1.8849560022354126)), 
+    'skirt_g_01_wj': NoeVec3((1.570796012878418, 0.05235987901687622, -1.9198620319366455)), 'skirt_g_02_wj': NoeVec3((0.0, -0.15707960724830627, 0.0)), 'skirt_h_01_wj': NoeVec3((0.7853981852531433, -0.13962629437446594, -1.7976889610290527)), 'skirt_h_02_wj': NoeVec3((0.0, -0.03490658104419708, 0.0)), 
+    'spine_wj': NoeVec3((0.0, 0.0, 1.570796012878418)), 'breast_c_wj': NoeVec3((0.0, 3.49065899848938, 0.0)), 'breast_l_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 'breast_r_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 'face_root': NoeVec3((0.0, 0.01745329052209854, 0.0)), 
+    'hair_chara_root': NoeVec3((-0.01745329052209854, 0.0, -1.570796012878418)), 'hair_c_01_wj': NoeVec3((0.0, -0.1221729964017868, -1.570796012878418)), 'hair_l_01_wj': NoeVec3((-0.6632251143455505, -0.03490658104419708, -1.335176944732666)), 
+    'hair_r_01_wj': NoeVec3((0.6632251143455505, 0.03141592815518379, -1.7540559768676758)), 'hair_twintail_l_01_wj': NoeVec3((-1.527163028717041, 0.5235987901687622, -0.3490658104419708)), 'hair_twintail_l_02_wj': NoeVec3((0.0, 0.9250245094299316, 0.0)), 
+    'hair_twintail_l_03_wj': NoeVec3((0.0, 0.8290314078330994, 0.0)), 'hair_twintail_r_01_wj': NoeVec3((1.527163028717041, 0.5235987901687622, -2.792526960372925)), 'hair_twintail_r_02_wj': NoeVec3((0.0, 0.9250245094299316, 0.0)), 'hair_twintail_r_03_wj': NoeVec3((0.0, 0.8290314078330994, 0.0)), 
+    'hairside_l_01_wj': NoeVec3((0.0, 0.0, -1.6580630540847778)), 'hairside_l_02_wj': NoeVec3((0.0, -0.1745329052209854, -0.05235987901687622)), 'hairside_r_01_wj': NoeVec3((0.0, 0.0, -1.483530044555664)), 'hairside_r_02_wj': NoeVec3((0.0, -0.1745329052209854, 0.05235987901687622)), 
+    'hair_root': NoeVec3((-0.03490658104419708, 0.0, -1.570796012878418)), 'hairback_c_01_wj': NoeVec3((0.0, 3.054326057434082, 1.570796012878418)), 'hairback_l_01_wj': NoeVec3((-2.5132739543914795, 0.1221729964017868, -1.483530044555664)), 
+    'hairback_r_01_wj': NoeVec3((2.5132739543914795, 0.1221729964017868, -1.6580630540847778))},
+    'TSH': {'lskirt_a_01_wj': NoeVec3((0.0, -0.0872664600610733, -1.570796012878418)), 'lskirt_b_01_wj': NoeVec3((-0.7853981852531433, -0.10471980273723602, -1.4486229419708252)), 'lskirt_c_01_wj': NoeVec3((-1.570796012878418, 0.0, -1.3089970350265503)), 
+    'lskirt_d_01_wj': NoeVec3((-2.3387410640716553, 0.1745329052209854, -1.3962630033493042)), 'lskirt_e_01_wj': NoeVec3((0.0, 2.8797929286956787, 1.570796012878418)), 'lskirt_f_01_wj': NoeVec3((2.3387410640716553, 0.1745329052209854, -1.7453290224075317)), 
+    'lskirt_g_01_wj': NoeVec3((1.570796012878418, 0.0, -1.832595944404602)), 'lskirt_h_01_wj': NoeVec3((0.7853981852531433, -0.10471980273723602, -1.6929689645767212)), 'skirt_a_01_wj': NoeVec3((0.0, -0.06632251292467117, -1.570796012878418)), 
+    'skirt_a_02_wj': NoeVec3((0.0, -0.06981316953897476, 0.0)), 'skirt_b_01_wj': NoeVec3((-0.6632251143455505, -0.08028514683246613, -1.3788100481033325)), 'skirt_b_02_wj': NoeVec3((0.0, -0.06283185631036758, 0.0)), 'skirt_c_01_wj': NoeVec3((-1.5533430576324463, 0.10471980273723602, -1.1868239641189575)), 
+    'skirt_c_02_wj': NoeVec3((0.0, -0.0872664600610733, 0.0)), 'skirt_d_01_wj': NoeVec3((-2.3212881088256836, 0.22689279913902283, -1.3089970350265503)), 'skirt_d_02_wj': NoeVec3((0.0, -0.06981316953897476, 0.0)), 'skirt_e_01_wj': NoeVec3((0.0, 2.8448870182037354, 1.570796012878418)), 
+    'skirt_e_02_wj': NoeVec3((0.0, -0.03490658104419708, 0.0)), 'skirt_f_01_wj': NoeVec3((2.3212881088256836, 0.22689279913902283, -1.832595944404602)), 'skirt_f_02_wj': NoeVec3((0.0, -0.06981316953897476, 0.0)), 'skirt_g_01_wj': NoeVec3((1.5533430576324463, 0.10471980273723602, -1.9547690153121948)), 
+    'skirt_g_02_wj': NoeVec3((0.0, -0.0872664600610733, 0.0)), 'skirt_h_01_wj': NoeVec3((0.6632251143455505, -0.08028514683246613, -1.7627830505371094)), 'skirt_h_02_wj': NoeVec3((0.0, -0.06283185631036758, 0.0)), 'spine_wj': NoeVec3((0.0, 0.0, 1.570796012878418)), 
+    'breast_c_wj': NoeVec3((0.0, 3.1415929794311523, 0.0)), 'breast_l_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 'breast_r_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 'face_root': NoeVec3((0.0, 0.01745329052209854, 0.0)), 
+    'hair_chara_root': NoeVec3((-0.01745329052209854, 0.0, -1.570796012878418)), 'hair_c_wj': NoeVec3((0.02094395086169243, -0.027925269678235054, -1.274090051651001)), 'hair_l_01_wj': NoeVec3((-0.767944872379303, 0.3665192127227783, -0.9599310755729675)), 
+    'hair_l_02_wj': NoeVec3((-0.40142568945884705, 0.3490658104419708, -0.13962629437446594)), 'hair_r_01_wj': NoeVec3((0.5672320127487183, 0.3141593039035797, -2.164207935333252)), 'hair_r_02_wj': NoeVec3((0.33161258697509766, 0.471238911151886, 0.3490658104419708)), 
+    'hairside_l_01_wj': NoeVec3((0.0, 0.0, -1.6057029962539673)), 'hairside_l_02_wj': NoeVec3((-0.010471980087459087, -0.111701101064682, -0.10471980273723602)), 'hairside_r_01_wj': NoeVec3((0.0, 0.0, -1.535889983177185)), 'hairside_r_02_wj': NoeVec3((0.010471980087459087, -0.111701101064682, 0.10471980273723602)), 
+    'hairtop_01_wj': NoeVec3((0.9773843884468079, -0.2617993950843811, -2.670353889465332)), 'hairtop_02_wj': NoeVec3((-0.06537985801696777, 0.9969965815544128, -0.025604330003261566)), 'hair_root': NoeVec3((-0.03490658104419708, 0.0, -1.570796012878418)), 
+    'hairback_c_01_wj': NoeVec3((0.0, 3.0019659996032715, 1.570796012878418)), 'hairback_c_02_wj': NoeVec3((0.0, 0.0345575213432312, 0.0)), 'hairback_c_03_wj': NoeVec3((0.0, 0.05235987901687622, 0.0)), 'hairback_c_04_wj': NoeVec3((0.0, 0.03490658104419708, 0.0)), 
+    'hairback_l_01_wj': NoeVec3((-2.5132739543914795, 0.1221729964017868, -1.483530044555664)), 'hairback_l_03_wj': NoeVec3((0.0, 0.0872664600610733, 0.0)), 'hairback_l_04_wj': NoeVec3((0.0, 0.0872664600610733, 0.0)), 'hairback_r_01_wj': NoeVec3((2.5132739543914795, 0.1221729964017868, -1.6580630540847778)), 
+    'hairback_r_03_wj': NoeVec3((0.0, 0.0872664600610733, 0.0)), 'hairback_r_04_wj': NoeVec3((0.0, 0.0872664600610733, 0.0))},
+    'TSK': {'lskirt_a_01_wj': NoeVec3((0.0, -0.0872664600610733, -1.570796012878418)), 'lskirt_b_01_wj': NoeVec3((-0.7853981852531433, -0.10471980273723602, -1.4486229419708252)), 'lskirt_c_01_wj': NoeVec3((-1.570796012878418, 0.0, -1.3089970350265503)), 
+    'lskirt_d_01_wj': NoeVec3((-2.3387410640716553, 0.1745329052209854, -1.3962630033493042)), 'lskirt_e_01_wj': NoeVec3((0.0, 2.8797929286956787, 1.570796012878418)), 'lskirt_f_01_wj': NoeVec3((2.3387410640716553, 0.1745329052209854, -1.7453290224075317)), 
+    'lskirt_g_01_wj': NoeVec3((1.570796012878418, 0.0, -1.832595944404602)), 'lskirt_h_01_wj': NoeVec3((0.7853981852531433, -0.10471980273723602, -1.6929689645767212)), 'skirt_a_01_wj': NoeVec3((0.0, -0.06632251292467117, -1.570796012878418)), 'skirt_a_02_wj': NoeVec3((0.0, -0.06981316953897476, 0.0)), 
+    'skirt_b_01_wj': NoeVec3((-0.6632251143455505, -0.08028514683246613, -1.3788100481033325)), 'skirt_b_02_wj': NoeVec3((0.0, -0.06283185631036758, 0.0)), 'skirt_c_01_wj': NoeVec3((-1.5533430576324463, 0.10471980273723602, -1.1868239641189575)), 'skirt_c_02_wj': NoeVec3((0.0, -0.0872664600610733, 0.0)), 
+    'skirt_d_01_wj': NoeVec3((-2.3212881088256836, 0.22689279913902283, -1.3089970350265503)), 'skirt_d_02_wj': NoeVec3((0.0, -0.06981316953897476, 0.0)), 'skirt_e_01_wj': NoeVec3((0.0, 2.8448870182037354, 1.570796012878418)), 'skirt_e_02_wj': NoeVec3((0.0, -0.03490658104419708, 0.0)), 
+    'skirt_f_01_wj': NoeVec3((2.3212881088256836, 0.22689279913902283, -1.832595944404602)), 'skirt_f_02_wj': NoeVec3((0.0, -0.06981316953897476, 0.0)), 'skirt_g_01_wj': NoeVec3((1.5533430576324463, 0.10471980273723602, -1.9547690153121948)), 'skirt_g_02_wj': NoeVec3((0.0, -0.0872664600610733, 0.0)), 
+    'skirt_h_01_wj': NoeVec3((0.6632251143455505, -0.08028514683246613, -1.7627830505371094)), 'skirt_h_02_wj': NoeVec3((0.0, -0.06283185631036758, 0.0)), 'spine_wj': NoeVec3((0.0, 0.0, 1.570796012878418)), 'breast_c_wj': NoeVec3((0.0, 3.1415929794311523, 0.0)), 
+    'breast_l_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 'breast_r_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 'face_root': NoeVec3((0.0, 0.01745329052209854, 0.0)), 'hair_chara_root': NoeVec3((-0.01745329052209854, 0.0, -1.570796012878418)), 
+    'haira_l_01_wj': NoeVec3((-0.16869999468326569, 0.04495863988995552, -1.312798023223877)), 'haira_r_01_wj': NoeVec3((0.16869999468326569, 0.04495863988995552, -1.8287910223007202)), 'hairb_l_01_wj': NoeVec3((-0.8072497248649597, 0.4068728983402252, -1.4254380464553833)), 
+    'hairb_r_01_wj': NoeVec3((0.6448416113853455, 0.386775404214859, -1.6916120052337646)), 'hairside_l_01_wj': NoeVec3((0.010506879538297653, -0.15015070140361786, -1.6408710479736328)), 'hairside_l_02_wj': NoeVec3((-0.018308499827980995, 0.1612859070301056, -0.04427900165319443)), 
+    'hairside_r_01_wj': NoeVec3((-0.010506879538297653, -0.15015070140361786, -1.500704050064087)), 'hairside_r_02_wj': NoeVec3((0.018308499827980995, 0.1612859070301056, 0.04427900165319443)), 'ribbon_l_01_wj': NoeVec3((0.0, 0.0872664600610733, 0.0)), 'ribbon_r_01_wj': NoeVec3((0.0, 3.2288589477539062, 0.0)), 
+    'hair_root': NoeVec3((-0.03490658104419708, 0.0, -1.570796012878418)), 'hairback_c_01_wj': NoeVec3((0.0, 3.054326057434082, 1.570796012878418)), 'hairback_l_01_wj': NoeVec3((-2.5132739543914795, 0.1221729964017868, -1.483530044555664)), 
+    'hairback_r_01_wj': NoeVec3((2.5132739543914795, 0.1221729964017868, -1.6580630540847778))},
+    'TSY': {'lskirt_a_01_wj': NoeVec3((0.0, -0.0872664600610733, -1.570796012878418)), 'lskirt_b_01_wj': NoeVec3((-0.7853981852531433, -0.10471980273723602, -1.4486229419708252)), 'lskirt_c_01_wj': NoeVec3((-1.570796012878418, 0.0, -1.3089970350265503)), 
+    'lskirt_d_01_wj': NoeVec3((-2.3387410640716553, 0.1745329052209854, -1.3962630033493042)), 'lskirt_e_01_wj': NoeVec3((0.0, 2.8797929286956787, 1.570796012878418)), 'lskirt_f_01_wj': NoeVec3((2.3387410640716553, 0.1745329052209854, -1.7453290224075317)), 
+    'lskirt_g_01_wj': NoeVec3((1.570796012878418, 0.0, -1.832595944404602)), 'lskirt_h_01_wj': NoeVec3((0.7853981852531433, -0.10471980273723602, -1.6929689645767212)), 'skirt_a_01_wj': NoeVec3((0.0, -0.0872664600610733, -1.570796012878418)), 
+    'skirt_a_02_wj': NoeVec3((0.0, -0.06981316953897476, 0.0)), 'skirt_b_01_wj': NoeVec3((-0.7853981852531433, -0.05235987901687622, -1.4660769701004028)), 'skirt_b_02_wj': NoeVec3((0.0, -0.05235987901687622, 0.0)), 'skirt_c_01_wj': NoeVec3((-1.570796012878418, 0.0, -1.3089970350265503)), 
+    'skirt_c_02_wj': NoeVec3((0.0, -0.1745329052209854, 0.0)), 'skirt_d_01_wj': NoeVec3((-2.3387410640716553, 0.1745329052209854, -1.3962630033493042)), 'skirt_d_02_wj': NoeVec3((0.0, -0.13962629437446594, 0.0)), 'skirt_e_01_wj': NoeVec3((0.0, 2.8797929286956787, 1.570796012878418)), 
+    'skirt_e_02_wj': NoeVec3((0.0, -0.05235987901687622, 0.0)), 'skirt_f_01_wj': NoeVec3((2.3387410640716553, 0.1745329052209854, -1.7453290224075317)), 'skirt_f_02_wj': NoeVec3((0.0, -0.13962629437446594, 0.0)), 'skirt_g_01_wj': NoeVec3((1.570796012878418, 0.0, -1.832595944404602)), 
+    'skirt_g_02_wj': NoeVec3((0.0, -0.1745329052209854, 0.0)), 'skirt_h_01_wj': NoeVec3((0.7853981852531433, -0.05235987901687622, -1.6755160093307495)), 'skirt_h_02_wj': NoeVec3((0.0, -0.05235987901687622, 0.0)), 'spine_wj': NoeVec3((0.0, 0.0, 1.570796012878418)), 
+    'breast_c_wj': NoeVec3((0.0, 3.49065899848938, 0.0)), 'breast_l_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 'breast_r_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 'face_root': NoeVec3((0.0, 0.01745329052209854, 0.0)), 
+    'hair_chara_root': NoeVec3((-0.01745329052209854, 0.0, -1.570796012878418)), 'hair_c_01_wj': NoeVec3((0.0, 0.2094395011663437, -1.9198620319366455)), 'hair_l_01_wj': NoeVec3((-0.767944872379303, 0.4363322854042053, -1.2217299938201904)), 
+    'hair_r_01_wj': NoeVec3((0.767944872379303, 0.4363322854042053, -1.9198620319366455)), 'hairside_l_01_wj': NoeVec3((0.0, -0.13962629437446594, -1.6406099796295166)), 'hairside_r_01_wj': NoeVec3((0.0, -0.13962629437446594, -1.5009829998016357)), 
+    'hair_root': NoeVec3((-0.03490658104419708, 0.0, -1.570796012878418)), 'hairback_c_01_wj': NoeVec3((0.0, 2.8274331092834473, 1.570796012878418)), 'hairback_c_02_wj': NoeVec3((0.0, 0.2617993950843811, 0.0)), 
+    'hairback_l_01_wj': NoeVec3((-2.5132739543914795, 0.2617993950843811, -1.3089970350265503)), 'hairback_l_02_wj': NoeVec3((0.0, 0.1745329052209854, 0.0)), 'hairback_r_01_wj': NoeVec3((2.5132739543914795, 0.2617993950843811, -1.832595944404602)), 
+    'hairback_r_02_wj': NoeVec3((0.0, 0.1745329052209854, 0.0))},
+    'VIB': {'lskirt_a_01_wj': NoeVec3((0.0, -0.0872664600610733, -1.570796012878418)), 'lskirt_b_01_wj': NoeVec3((-0.7853981852531433, -0.10471980273723602, -1.4486229419708252)), 'lskirt_c_01_wj': NoeVec3((-1.570796012878418, 0.0, -1.3089970350265503)), 
+    'lskirt_d_01_wj': NoeVec3((-2.3387410640716553, 0.1745329052209854, -1.3962630033493042)), 'lskirt_e_01_wj': NoeVec3((0.0, 2.8797929286956787, 1.570796012878418)), 'lskirt_f_01_wj': NoeVec3((2.3387410640716553, 0.1745329052209854, -1.7453290224075317)), 
+    'lskirt_g_01_wj': NoeVec3((1.570796012878418, 0.0, -1.832595944404602)), 'lskirt_h_01_wj': NoeVec3((0.7853981852531433, -0.10471980273723602, -1.6929689645767212)), 'skirt_a_01_wj': NoeVec3((0.0, -0.15707960724830627, -1.570796012878418)), 
+    'skirt_b_01_wj': NoeVec3((-0.9250245094299316, -0.013962630182504654, -1.1344640254974365)), 'skirt_c_01_wj': NoeVec3((-1.570796012878418, 0.2705259919166565, -0.890117883682251)), 'skirt_c_02_wj': NoeVec3((0.0, 0.06108652055263519, 0.0)), 
+    'skirt_d_01_wj': NoeVec3((-2.4434609413146973, 0.6283184885978699, -1.0471980571746826)), 'skirt_e_01_wj': NoeVec3((0.0, 2.4085540771484375, 1.570796012878418)), 'skirt_f_01_wj': NoeVec3((2.4434609413146973, 0.6283184885978699, -2.0943949222564697)), 
+    'skirt_g_01_wj': NoeVec3((1.570796012878418, 0.2705259919166565, -2.2514750957489014)), 'skirt_g_02_wj': NoeVec3((0.0, 0.06108652055263519, 0.0)), 'skirt_h_01_wj': NoeVec3((0.9250245094299316, -0.01396264974027872, -2.007128953933716)), 'spine_wj': NoeVec3((0.0, 0.0, 1.570796012878418)), 
+    'breast_c_wj': NoeVec3((0.0, 3.1415929794311523, 0.0)), 'breast_l_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 'breast_r_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 'face_root': NoeVec3((0.0, 0.01745329052209854, 0.0)), 
+    'hair_chara_root': NoeVec3((-0.01745329052209854, 0.0, -1.570796012878418)), 'hair_c_01_wj': NoeVec3((0.0, 0.3263765871524811, -0.8098328113555908)), 'hair_cap_01_wj': NoeVec3((0.0, 0.40142568945884705, 1.570796012878418)), 'hair_r_01_wj': NoeVec3((0.0, 0.24958209693431854, -1.6807520389556885)), 
+    'hairside_l_01_wj': NoeVec3((0.0, 0.059341199696063995, -1.5882500410079956)), 'hairside_l_02_wj': NoeVec3((0.00593411922454834, -0.179768905043602, -0.10122910141944885)), 'hairside_l_03_wj': NoeVec3((-0.03141592815518379, -0.12740899622440338, -0.2617993950843811)), 
+    'hairside_r_01_wj': NoeVec3((0.0, 0.059341199696063995, -1.5533430576324463)), 'hairside_r_02_wj': NoeVec3((-0.00593411922454834, -0.179768905043602, 0.10122910141944885)), 'hairside_r_03_wj': NoeVec3((0.03141592815518379, -0.12740899622440338, 0.2617993950843811)), 
+    'hair_root': NoeVec3((-0.03490658104419708, 0.0, -1.570796012878418)), 'hairback_c_01_wj': NoeVec3((0.0, 2.975785970687866, 1.570796012878418)), 'hairback_c_02_wj': NoeVec3((0.0, -0.1221729964017868, 0.0)), 'hairback_c_03_wj': NoeVec3((0.0, 0.2617993950843811, 0.0)), 
+    'hairback_l_01_wj': NoeVec3((-2.495820999145508, 0.11519169807434082, -1.4416420459747314)), 'hairback_l_02_wj': NoeVec3((0.0, -0.1221729964017868, 0.0)), 'hairback_l_03_wj': NoeVec3((0.0, 0.2094395011663437, 0.0)), 'hairback_r_01_wj': NoeVec3((2.495820999145508, 0.11519169807434082, -1.6999510526657104)), 
+    'hairback_r_02_wj': NoeVec3((0.0, -0.1221729964017868, 0.0)), 'hairback_r_03_wj': NoeVec3((0.0, 0.2094395011663437, 0.0))},
+    'VIG': {'lskirt_a_01_wj': NoeVec3((0.0, -0.0872664600610733, -1.570796012878418)), 'lskirt_b_01_wj': NoeVec3((-0.7853981852531433, -0.10471980273723602, -1.4486229419708252)), 'lskirt_c_01_wj': NoeVec3((-1.570796012878418, 0.0, -1.3089970350265503)), 
+    'lskirt_d_01_wj': NoeVec3((-2.3387410640716553, 0.1745329052209854, -1.3962630033493042)), 'lskirt_e_01_wj': NoeVec3((0.0, 2.8797929286956787, 1.570796012878418)), 'lskirt_f_01_wj': NoeVec3((2.3387410640716553, 0.1745329052209854, -1.7453290224075317)), 
+    'lskirt_g_01_wj': NoeVec3((1.570796012878418, 0.0, -1.832595944404602)), 'lskirt_h_01_wj': NoeVec3((0.7853981852531433, -0.10471980273723602, -1.6929689645767212)), 'skirt_a_01_wj': NoeVec3((0.0, -0.15707960724830627, -1.570796012878418)), 
+    'skirt_b_01_wj': NoeVec3((-0.9250245094299316, -0.013962630182504654, -1.1344640254974365)), 'skirt_c_01_wj': NoeVec3((-1.570796012878418, 0.2705259919166565, -0.890117883682251)), 'skirt_c_02_wj': NoeVec3((0.0, 0.06108652055263519, 0.0)), 
+    'skirt_d_01_wj': NoeVec3((-2.4434609413146973, 0.6283184885978699, -1.0471980571746826)), 'skirt_e_01_wj': NoeVec3((0.0, 2.4085540771484375, 1.570796012878418)), 'skirt_f_01_wj': NoeVec3((2.4434609413146973, 0.6283184885978699, -2.0943949222564697)), 
+    'skirt_g_01_wj': NoeVec3((1.570796012878418, 0.2705259919166565, -2.2514750957489014)), 'skirt_g_02_wj': NoeVec3((0.0, 0.06108652055263519, 0.0)), 'skirt_h_01_wj': NoeVec3((0.9250245094299316, -0.01396264974027872, -2.007128953933716)), 'spine_wj': NoeVec3((0.0, 0.0, 1.570796012878418)), 
+    'breast_c_wj': NoeVec3((0.0, 3.1415929794311523, 0.0)), 'breast_l_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 'breast_r_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 'hair_chara_root': NoeVec3((-0.01745329052209854, 0.0, -1.570796012878418)), 
+    'hair_c_01_wj': NoeVec3((-0.01054546982049942, 0.25635218620300293, -1.1707969903945923)), 'hair_cap_01_wj': NoeVec3((0.0, 0.4136430025100708, 1.570796012878418)), 'hair_l_01_wj': NoeVec3((-0.021374180912971497, 0.4969981908798218, -0.9593585729598999)), 
+    'hair_ponytail_01_wj': NoeVec3((-1.575508952140808, 0.24783679842948914, -1.3807300329208374)), 'hair_ponytail_02_wj': NoeVec3((0.0, -0.15707960724830627, -0.18500490486621857)), 'hair_ponytail_03_wj': NoeVec3((-0.008726646192371845, -0.12112580239772797, -0.4757767915725708)), 
+    'hair_ponytail_04_wj': NoeVec3((-0.012740899808704853, 0.11780969798564911, -0.6223844289779663)), 'hair_ponytail_05_wj': NoeVec3((-0.18971729278564453, 0.35360369086265564, -0.1802925020456314)), 'hair_ponytail_06_wj': NoeVec3((0.0005235986900515854, -0.26511549949645996, 0.47403138875961304)), 
+    'hair_t_01_wj': NoeVec3((-0.008203047327697277, -0.518362820148468, 2.4661500453948975)), 'hairside_l_01_wj': NoeVec3((0.19198620319366455, 0.3665192127227783, -1.4800390005111694)), 'hairside_r_01_wj': NoeVec3((0.04886921867728233, 0.15358899533748627, -1.6929689645767212)), 
+    'hair_root': NoeVec3((-0.03490658104419708, 0.0, -1.570796012878418)), 'hairback_c_01_wj': NoeVec3((0.0, 2.975785970687866, 1.570796012878418)), 'hairback_l_01_wj': NoeVec3((-2.495820999145508, 0.11519169807434082, -1.4416420459747314)), 
+    'hairback_r_01_wj': NoeVec3((2.495820999145508, 0.11519169807434082, -1.6999510526657104))},
+    'VIR': {'lskirt_a_01_wj': NoeVec3((0.0, -0.0872664600610733, -1.570796012878418)), 'lskirt_b_01_wj': NoeVec3((-0.7853981852531433, -0.10471980273723602, -1.4486229419708252)), 'lskirt_c_01_wj': NoeVec3((-1.570796012878418, 0.0, -1.3089970350265503)), 
+    'lskirt_d_01_wj': NoeVec3((-2.3387410640716553, 0.1745329052209854, -1.3962630033493042)), 'lskirt_e_01_wj': NoeVec3((0.0, 2.8797929286956787, 1.570796012878418)), 'lskirt_f_01_wj': NoeVec3((2.3387410640716553, 0.1745329052209854, -1.7453290224075317)), 
+    'lskirt_g_01_wj': NoeVec3((1.570796012878418, 0.0, -1.832595944404602)), 'lskirt_h_01_wj': NoeVec3((0.7853981852531433, -0.10471980273723602, -1.6929689645767212)), 'skirt_a_01_wj': NoeVec3((0.0, -0.15707960724830627, -1.570796012878418)), 
+    'skirt_b_01_wj': NoeVec3((-0.9250245094299316, -0.013962630182504654, -1.1344640254974365)), 'skirt_c_01_wj': NoeVec3((-1.570796012878418, 0.2705259919166565, -0.890117883682251)), 'skirt_c_02_wj': NoeVec3((0.0, 0.06108652055263519, 0.0)), 
+    'skirt_d_01_wj': NoeVec3((-2.4434609413146973, 0.6283184885978699, -1.0471980571746826)), 'skirt_e_01_wj': NoeVec3((0.0, 2.4085540771484375, 1.570796012878418)), 'skirt_f_01_wj': NoeVec3((2.4434609413146973, 0.6283184885978699, -2.0943949222564697)), 
+    'skirt_g_01_wj': NoeVec3((1.570796012878418, 0.2705259919166565, -2.2514750957489014)), 'skirt_g_02_wj': NoeVec3((0.0, 0.06108652055263519, 0.0)), 'skirt_h_01_wj': NoeVec3((0.9250245094299316, -0.01396264974027872, -2.007128953933716)), 'spine_wj': NoeVec3((0.0, 0.0, 1.570796012878418)), 
+    'breast_c_wj': NoeVec3((0.0, 3.1415929794311523, 0.0)), 'breast_l_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 'breast_r_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 'face_root': NoeVec3((0.0, 0.01745329052209854, 0.0)), 
+    'hair_chara_root': NoeVec3((-0.03490658104419708, 0.0, -1.570796012878418)), 'hair_c_01_wj': NoeVec3((0.0, 0.02617993950843811, -1.570796012878418)), 'hair_cap_01_wj': NoeVec3((0.0, 0.39444440603256226, 1.570796012878418)), 'hair_l_01_wj': NoeVec3((0.0, 0.3141593039035797, -1.2217299938201904)), 
+    'hair_r_01_wj': NoeVec3((-0.24434609711170197, 0.2617993950843811, -2.0420351028442383)), 'hair_t_01_wj': NoeVec3((0.0, 0.19198620319366455, 1.570796012878418)), 'hairside_l_01_wj': NoeVec3((-0.01117010973393917, 0.27925270795822144, -1.4137170314788818)), 
+    'hairside_l_02_wj': NoeVec3((0.0, 0.0, -0.4621562063694)), 'hairside_r_01_wj': NoeVec3((0.0, 0.27925270795822144, -1.7278759479522705)), 'hairside_r_02_wj': NoeVec3((-0.1269986927509308, -0.004980436991900206, 0.4621317982673645)), 
+    'hairsideback_l_01_wj': NoeVec3((-0.2792421877384186, 0.29223790764808655, -0.8462350964546204)), 'hairsideback_l_02_wj': NoeVec3((0.0, 0.0, -0.8726645708084106)), 'hairsideback_r_01_wj': NoeVec3((0.2792421877384186, 2.8493549823760986, 0.8462350964546204)), 
+    'hairsideback_r_02_wj': NoeVec3((0.0, 0.0, -0.8726645708084106)), 'hair_root': NoeVec3((-0.03490658104419708, 0.0, -1.570796012878418)), 'hairback_c_01_wj': NoeVec3((0.0, 3.054326057434082, 1.570796012878418)), 'hairback_l_01_wj': NoeVec3((0.0, 3.0979599952697754, 1.3788100481033325)), 
+    'hairback_l_02_wj': NoeVec3((-0.007689624093472958, -0.07828255742788315, -0.2928104102611542)), 'hairback_r_01_wj': NoeVec3((3.1415929794311523, 0.04363096132874489, -1.3788100481033325)), 'hairback_r_02_wj': NoeVec3((0.007688647136092186, -0.07828377932310104, 0.29279640316963196))},
+    'VIS': {'lskirt_a_01_wj': NoeVec3((0.0, -0.0872664600610733, -1.570796012878418)), 'lskirt_b_01_wj': NoeVec3((-0.7853981852531433, -0.10471980273723602, -1.4486229419708252)), 'lskirt_c_01_wj': NoeVec3((-1.570796012878418, 0.0, -1.3089970350265503)), 
+    'lskirt_d_01_wj': NoeVec3((-2.3387410640716553, 0.1745329052209854, -1.3962630033493042)), 'lskirt_e_01_wj': NoeVec3((0.0, 2.8797929286956787, 1.570796012878418)), 'lskirt_f_01_wj': NoeVec3((2.3387410640716553, 0.1745329052209854, -1.7453290224075317)), 
+    'lskirt_g_01_wj': NoeVec3((1.570796012878418, 0.0, -1.832595944404602)), 'lskirt_h_01_wj': NoeVec3((0.7853981852531433, -0.10471980273723602, -1.6929689645767212)), 'skirt_a_01_wj': NoeVec3((0.0, -0.0872664600610733, -1.570796012878418)), 
+    'skirt_b_01_wj': NoeVec3((-0.7853981852531433, -0.10471980273723602, -1.4660769701004028)), 'skirt_c_01_wj': NoeVec3((-1.570796012878418, 0.0, -1.3089970350265503)), 'skirt_c_02_wj': NoeVec3((0.0, 0.0872664600610733, 0.0)), 
+    'skirt_d_01_wj': NoeVec3((-2.3387410640716553, 0.1745329052209854, -1.3962630033493042)), 'skirt_e_01_wj': NoeVec3((0.0, 2.8797929286956787, 1.570796012878418)), 'skirt_f_01_wj': NoeVec3((2.3387410640716553, 0.1745329052209854, -1.7453290224075317)), 
+    'skirt_g_01_wj': NoeVec3((1.570796012878418, 0.0, -1.832595944404602)), 'skirt_g_02_wj': NoeVec3((0.0, 0.0872664600610733, 0.0)), 'skirt_h_01_wj': NoeVec3((0.7853981852531433, -0.10471980273723602, -1.6755160093307495)), 'spine_wj': NoeVec3((0.0, 0.0, 1.570796012878418)), 
+    'breast_c_wj': NoeVec3((0.0, 3.1415929794311523, 0.0)), 'breast_l_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 'breast_r_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 'muffler_l_01_wj': NoeVec3((0.5235987901687622, -0.06981316953897476, 2.4085540771484375)), 
+    'muffler_r_01_wj': NoeVec3((-0.5061454772949219, -0.0872664600610733, -2.4085540771484375)), 'face_root': NoeVec3((0.0, 0.01745329052209854, 0.0)), 'hair_chara_root': NoeVec3((-0.01745329052209854, 0.0, -1.570796012878418)), 
+    'hair_c_01_wj': NoeVec3((-0.03490658104419708, 0.03490658104419708, -1.2217299938201904)), 'hair_l_01_wj': NoeVec3((-0.5180835127830505, 0.460220605134964, -0.8863952159881592)), 'hair_r_01_wj': NoeVec3((0.6632251143455505, 0.541051983833313, -2.164207935333252)), 
+    'hair_root': NoeVec3((-0.03490658104419708, 0.0, -1.570796012878418)), 'hairback_c_01_wj': NoeVec3((0.0, 2.8797929286956787, 1.570796012878418)), 'hairback_c_02_wj': NoeVec3((0.0, -0.06981316953897476, 0.0)), 'hairback_c_03_wj': NoeVec3((0.0, 0.05235987901687622, 0.0)), 
+    'hairback_l_01_wj': NoeVec3((-2.5434510707855225, 0.28763720393180847, -1.529891014099121)), 'hairback_l_02_wj': NoeVec3((0.0, -0.0872664600610733, -0.1745329052209854)), 'hairback_l_03_wj': NoeVec3((0.0, 0.0, -0.1745329052209854)), 
+    'hairback_r_01_wj': NoeVec3((2.5434510707855225, 0.28763720393180847, -1.6117019653320312)), 'hairback_r_02_wj': NoeVec3((0.0, -0.0872664600610733, 0.1745329052209854)), 'hairback_r_03_wj': NoeVec3((0.0, 0.0, 0.1745329052209854))},
+    'VIY': {'lskirt_a_01_wj': NoeVec3((0.0, -0.0872664600610733, -1.570796012878418)), 'lskirt_b_01_wj': NoeVec3((-0.7853981852531433, -0.10471980273723602, -1.4486229419708252)), 'lskirt_c_01_wj': NoeVec3((-1.570796012878418, 0.0, -1.3089970350265503)), 
+    'lskirt_d_01_wj': NoeVec3((-2.3387410640716553, 0.1745329052209854, -1.3962630033493042)), 'lskirt_e_01_wj': NoeVec3((0.0, 2.8797929286956787, 1.570796012878418)), 'lskirt_f_01_wj': NoeVec3((2.3387410640716553, 0.1745329052209854, -1.7453290224075317)), 
+    'lskirt_g_01_wj': NoeVec3((1.570796012878418, 0.0, -1.832595944404602)), 'lskirt_h_01_wj': NoeVec3((0.7853981852531433, -0.10471980273723602, -1.6929689645767212)), 'skirt_a_01_wj': NoeVec3((0.0, -0.15707960724830627, -1.570796012878418)), 
+    'skirt_b_01_wj': NoeVec3((-0.9250245094299316, -0.013962630182504654, -1.1344640254974365)), 'skirt_c_01_wj': NoeVec3((-1.570796012878418, 0.2705259919166565, -0.890117883682251)), 'skirt_c_02_wj': NoeVec3((0.0, 0.06108652055263519, 0.0)), 
+    'skirt_d_01_wj': NoeVec3((-2.4434609413146973, 0.6283184885978699, -1.0471980571746826)), 'skirt_e_01_wj': NoeVec3((0.0, 2.4085540771484375, 1.570796012878418)), 'skirt_f_01_wj': NoeVec3((2.4434609413146973, 0.6283184885978699, -2.0943949222564697)), 
+    'skirt_g_01_wj': NoeVec3((1.570796012878418, 0.2705259919166565, -2.2514750957489014)), 'skirt_g_02_wj': NoeVec3((0.0, 0.06108652055263519, 0.0)), 'skirt_h_01_wj': NoeVec3((0.9250245094299316, -0.01396264974027872, -2.007128953933716)), 'spine_wj': NoeVec3((0.0, 0.0, 1.570796012878418)), 
+    'breast_c_wj': NoeVec3((0.0, 3.1415929794311523, 0.0)), 'breast_l_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 'breast_r_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 'face_root': NoeVec3((0.0, 0.01745329052209854, 0.0)), 
+    'hair_chara_root': NoeVec3((-0.01745329052209854, 0.0, -1.570796012878418)), 'hair_c_01_wj': NoeVec3((0.0, 0.23561950027942657, -1.58999502658844)), 'hair_cap_01_wj': NoeVec3((0.0, 0.40142568945884705, 1.570796012878418)), 'hair_l_01_wj': NoeVec3((0.0, 0.2111847996711731, -1.4887659549713135)), 
+    'hair_r_01_wj': NoeVec3((0.0, 0.5113813877105713, -2.3771378993988037)), 'hairside_l_01_wj': NoeVec3((0.0, -0.1665123999118805, -1.5414750576019287)), 'hairside_l_02_wj': NoeVec3((-0.007155850064009428, -0.6738715767860413, -0.02897246927022934)), 
+    'hairside_l_03_wj': NoeVec3((-0.2598794996738434, 0.07138396799564362, -0.25883230566978455)), 'hairside_r_01_wj': NoeVec3((0.0, -0.1665123999118805, -1.6001180410385132)), 'hairside_r_02_wj': NoeVec3((0.007155850064009428, -0.6738715767860413, 0.02897246927022934)), 
+    'hairside_r_03_wj': NoeVec3((0.2598794996738434, 0.07138396799564362, 0.25883230566978455)), 'hair_root': NoeVec3((-0.01745329052209854, 0.0, -1.570796012878418)), 'hairback_c_01_wj': NoeVec3((0.0, 2.9234259128570557, 1.570796012878418)), 'hairback_c_02_wj': NoeVec3((0.0, -0.3577924966812134, 0.0)), 
+    'hairback_c_03_wj': NoeVec3((0.0, 0.5078908205032349, 0.0)), 'hairback_c_04_wj': NoeVec3((0.0, 0.35988691449165344, 0.0)), 'hairback_l_01_wj': NoeVec3((-2.499660015106201, 0.13805550336837769, -1.4723600149154663)), 'hairback_l_02_wj': NoeVec3((0.0, -0.3892084062099457, 0.0)), 
+    'hairback_l_03_wj': NoeVec3((0.0, 0.518886387348175, 0.0)), 'hairback_l_04_wj': NoeVec3((0.0, 0.33772119879722595, 0.0)), 'hairback_r_01_wj': NoeVec3((2.499660015106201, 0.13805550336837769, -1.669232964515686)), 'hairback_r_02_wj': NoeVec3((0.0, -0.3892084062099457, 0.0)), 
+    'hairback_r_03_wj': NoeVec3((0.0, 0.518886387348175, 0.0)), 'hairback_r_04_wj': NoeVec3((0.0, 0.33772119879722595, 0.0))},
+    'WG1': {'lskirt_a_01_wj': NoeVec3((0.0, -0.0872664600610733, -1.570796012878418)), 'lskirt_b_01_wj': NoeVec3((-0.7853981852531433, -0.10471980273723602, -1.4486229419708252)), 'lskirt_c_01_wj': NoeVec3((-1.570796012878418, 0.0, -1.3089970350265503)), 
+    'lskirt_d_01_wj': NoeVec3((-2.3387410640716553, 0.1745329052209854, -1.3962630033493042)), 'lskirt_e_01_wj': NoeVec3((0.0, 2.8797929286956787, 1.570796012878418)), 'lskirt_f_01_wj': NoeVec3((2.3387410640716553, 0.1745329052209854, -1.7453290224075317)), 
+    'lskirt_g_01_wj': NoeVec3((1.570796012878418, 0.0, -1.832595944404602)), 'lskirt_h_01_wj': NoeVec3((0.7853981852531433, -0.10471980273723602, -1.6929689645767212)), 'skirt_a_01_wj': NoeVec3((0.0, -0.21816620230674744, -1.570796012878418)), 
+    'skirt_b_01_wj': NoeVec3((-0.8028513789176941, -0.22689279913902283, -1.3439040184020996)), 'skirt_b_02_wj': NoeVec3((0.0, 0.04363323003053665, 0.0)), 'skirt_c_01_wj': NoeVec3((-1.570796012878418, 0.0, -1.1519169807434082)), 'skirt_c_02_wj': NoeVec3((0.0, 0.0872664600610733, 0.0)), 
+    'skirt_d_01_wj': NoeVec3((-2.2863810062408447, 0.34033921360969543, -1.2042770385742188)), 'skirt_d_02_wj': NoeVec3((0.0, 0.2042035013437271, 0.0)), 'skirt_e_01_wj': NoeVec3((0.0, 2.6616270542144775, 1.570796012878418)), 'skirt_e_02_wj': NoeVec3((0.0, 0.16580629348754883, 0.0)), 
+    'skirt_f_01_wj': NoeVec3((2.2863810062408447, 0.34033921360969543, -1.9373149871826172)), 'skirt_f_02_wj': NoeVec3((0.0, 0.2042035013437271, 0.0)), 'skirt_g_01_wj': NoeVec3((1.570796012878418, 0.0, -1.9896750450134277)), 'skirt_g_02_wj': NoeVec3((0.0, 0.0872664600610733, 0.0)), 
+    'skirt_h_01_wj': NoeVec3((0.8028513789176941, -0.22689279913902283, -1.7976889610290527)), 'skirt_h_02_wj': NoeVec3((0.0, 0.04363323003053665, 0.0)), 'spine_wj': NoeVec3((0.0, 0.0, 1.570796012878418)), 'breast_c_wj': NoeVec3((0.0, 3.1415929794311523, 0.0)), 
+    'breast_l_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 'breast_r_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 'face_root': NoeVec3((0.0, 0.01745329052209854, 0.0)), 'hair_chara_root': NoeVec3((-0.01745329052209854, 0.0, -1.570796012878418)), 
+    'hairside_l_01_wj': NoeVec3((0.0, -0.05235987901687622, -1.7453290224075317)), 'hairside_l_02_wj': NoeVec3((0.0, -0.24434609711170197, 0.0872664600610733)), 'hairside_l_03_wj': NoeVec3((0.0, -0.0872664600610733, 0.0872664600610733)), 
+    'hairside_r_01_wj': NoeVec3((0.0, -0.05235987901687622, -1.3962630033493042)), 'hairside_r_02_wj': NoeVec3((0.0, -0.24434609711170197, -0.0872664600610733)), 'hairside_r_03_wj': NoeVec3((0.0, -0.0872664600610733, -0.0872664600610733)), 
+    'hair_root': NoeVec3((-0.03490658104419708, 0.0, -1.570796012878418)), 'hairback_c_01_wj': NoeVec3((0.0, 3.054326057434082, 1.570796012878418)), 'hairback_c_03_wj': NoeVec3((0.0, 0.13962629437446594, 0.0)), 'hairback_l_01_wj': NoeVec3((-2.5132739543914795, 0.1221729964017868, -1.483530044555664)), 
+    'hairback_l_03_wj': NoeVec3((0.0, 0.1221729964017868, 0.10471980273723602)), 'hairback_r_01_wj': NoeVec3((2.5132739543914795, 0.1221729964017868, -1.6580630540847778)), 'hairback_r_03_wj': NoeVec3((0.0, 0.1221729964017868, -0.10471980273723602))},
+    'WG2': {'lskirt_a_01_wj': NoeVec3((0.0, -0.0872664600610733, -1.570796012878418)), 'lskirt_b_01_wj': NoeVec3((-0.7853981852531433, -0.10471980273723602, -1.4486229419708252)), 'lskirt_c_01_wj': NoeVec3((-1.570796012878418, 0.0, -1.3089970350265503)), 
+    'lskirt_d_01_wj': NoeVec3((-2.3387410640716553, 0.1745329052209854, -1.3962630033493042)), 'lskirt_e_01_wj': NoeVec3((0.0, 2.8797929286956787, 1.570796012878418)), 'lskirt_f_01_wj': NoeVec3((2.3387410640716553, 0.1745329052209854, -1.7453290224075317)), 
+    'lskirt_g_01_wj': NoeVec3((1.570796012878418, 0.0, -1.832595944404602)), 'lskirt_h_01_wj': NoeVec3((0.7853981852531433, -0.10471980273723602, -1.6929689645767212)), 'skirt_a_01_wj': NoeVec3((0.0, -0.21816620230674744, -1.570796012878418)), 
+    'skirt_b_01_wj': NoeVec3((-0.8028513789176941, -0.22689279913902283, -1.3439040184020996)), 'skirt_b_02_wj': NoeVec3((0.0, 0.04363323003053665, 0.0)), 'skirt_c_01_wj': NoeVec3((-1.570796012878418, 0.0, -1.1519169807434082)), 'skirt_c_02_wj': NoeVec3((0.0, 0.0872664600610733, 0.0)), 
+    'skirt_d_01_wj': NoeVec3((-2.2863810062408447, 0.34033921360969543, -1.2042770385742188)), 'skirt_d_02_wj': NoeVec3((0.0, 0.2042035013437271, 0.0)), 'skirt_e_01_wj': NoeVec3((0.0, 2.6616270542144775, 1.570796012878418)), 'skirt_e_02_wj': NoeVec3((0.0, 0.16580629348754883, 0.0)), 
+    'skirt_f_01_wj': NoeVec3((2.2863810062408447, 0.34033921360969543, -1.9373149871826172)), 'skirt_f_02_wj': NoeVec3((0.0, 0.2042035013437271, 0.0)), 'skirt_g_01_wj': NoeVec3((1.570796012878418, 0.0, -1.9896750450134277)), 'skirt_g_02_wj': NoeVec3((0.0, 0.0872664600610733, 0.0)), 
+    'skirt_h_01_wj': NoeVec3((0.8028513789176941, -0.22689279913902283, -1.7976889610290527)), 'skirt_h_02_wj': NoeVec3((0.0, 0.04363323003053665, 0.0)), 'spine_wj': NoeVec3((0.0, 0.0, 1.570796012878418)), 'breast_c_wj': NoeVec3((0.0, 3.1415929794311523, 0.0)), 
+    'breast_l_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 'breast_r_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 'face_root': NoeVec3((0.0, 0.01745329052209854, 0.0)), 'hair_chara_root': NoeVec3((-0.01745329052209854, 0.0, -1.570796012878418)), 
+    'hairside_l_01_wj': NoeVec3((0.0, 0.02972296066582203, -1.7001780271530151)), 'hairside_l_02_wj': NoeVec3((0.002234020968899131, -0.139923095703125, -0.07490953058004379)), 'hairside_r_01_wj': NoeVec3((0.0, 0.029618240892887115, -1.4492859840393066)), 
+    'hairside_r_02_wj': NoeVec3((-0.0024434609804302454, -0.13943439722061157, 0.0817861333489418)), 'hair_root': NoeVec3((-0.03490658104419708, 0.0, -1.570796012878418)), 'hairback_c_01_wj': NoeVec3((0.0, 0.20437809824943542, -1.570796012878418)), 
+    'hairback_c_02_wj': NoeVec3((-3.1415929794311523, -0.11711160093545914, 0.0)), 'hairback_c_03_wj': NoeVec3((0.0, 0.13962629437446594, 0.0)), 'hairback_l_01_wj': NoeVec3((-0.0030892330687493086, 0.029373889788985252, -1.7486799955368042)), 
+    'hairback_l_02_wj': NoeVec3((-2.5180039405822754, 0.0930260494351387, 0.26459190249443054)), 'hairback_l_03_wj': NoeVec3((0.0, 0.1221729964017868, 0.10471980273723602)), 'hairback_r_01_wj': NoeVec3((0.00321140605956316, 0.02926917001605034, -1.3860180377960205)), 
+    'hairback_r_02_wj': NoeVec3((2.5180740356445312, 0.09311331808567047, -0.2714860141277313)), 'hairback_r_03_wj': NoeVec3((0.0, 0.1221729964017868, -0.10471980273723602))},
+    'WG3': {'lskirt_a_01_wj': NoeVec3((0.0, -0.0872664600610733, -1.570796012878418)), 'lskirt_b_01_wj': NoeVec3((-0.7853981852531433, -0.10471980273723602, -1.4486229419708252)), 'lskirt_c_01_wj': NoeVec3((-1.570796012878418, 0.0, -1.3089970350265503)), 
+    'lskirt_d_01_wj': NoeVec3((-2.3387410640716553, 0.1745329052209854, -1.3962630033493042)), 'lskirt_e_01_wj': NoeVec3((0.0, 2.8797929286956787, 1.570796012878418)), 'lskirt_f_01_wj': NoeVec3((2.3387410640716553, 0.1745329052209854, -1.7453290224075317)), 
+    'lskirt_g_01_wj': NoeVec3((1.570796012878418, 0.0, -1.832595944404602)), 'lskirt_h_01_wj': NoeVec3((0.7853981852531433, -0.10471980273723602, -1.6929689645767212)), 'skirt_a_01_wj': NoeVec3((0.0, -0.21816620230674744, -1.570796012878418)), 
+    'skirt_b_01_wj': NoeVec3((-0.8028513789176941, -0.22689279913902283, -1.3439040184020996)), 'skirt_b_02_wj': NoeVec3((0.0, 0.04363323003053665, 0.0)), 'skirt_c_01_wj': NoeVec3((-1.570796012878418, 0.0, -1.1519169807434082)), 'skirt_c_02_wj': NoeVec3((0.0, 0.0872664600610733, 0.0)), 
+    'skirt_d_01_wj': NoeVec3((-2.2863810062408447, 0.34033921360969543, -1.2042770385742188)), 'skirt_d_02_wj': NoeVec3((0.0, 0.2042035013437271, 0.0)), 'skirt_e_01_wj': NoeVec3((0.0, 2.6616270542144775, 1.570796012878418)), 'skirt_e_02_wj': NoeVec3((0.0, 0.16580629348754883, 0.0)), 
+    'skirt_f_01_wj': NoeVec3((2.2863810062408447, 0.34033921360969543, -1.9373149871826172)), 'skirt_f_02_wj': NoeVec3((0.0, 0.2042035013437271, 0.0)), 'skirt_g_01_wj': NoeVec3((1.570796012878418, 0.0, -1.9896750450134277)), 'skirt_g_02_wj': NoeVec3((0.0, 0.0872664600610733, 0.0)), 
+    'skirt_h_01_wj': NoeVec3((0.8028513789176941, -0.22689279913902283, -1.7976889610290527)), 'skirt_h_02_wj': NoeVec3((0.0, 0.04363323003053665, 0.0)), 'spine_wj': NoeVec3((0.0, 0.0, 1.570796012878418)), 'breast_c_wj': NoeVec3((0.0, 3.1415929794311523, 0.0)), 
+    'breast_l_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 'breast_r_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 'face_root': NoeVec3((0.0, 0.01745329052209854, 0.0)), 'hair_chara_root': NoeVec3((-0.01745329052209854, 0.0, -1.570796012878418)), 
+    'hair_tail_l_01_wj': NoeVec3((-0.010367260314524174, 0.3887721002101898, -1.1831589937210083)), 'hair_tail_r_01_wj': NoeVec3((-0.02466150000691414, 0.38870230317115784, -1.9651880264282227)), 'hairside_l_01_wj': NoeVec3((0.0, 0.05450662970542908, -1.6814149618148804)), 
+    'hairside_l_02_wj': NoeVec3((0.005305801052600145, -0.04113740846514702, -0.09744173288345337)), 'hairside_r_01_wj': NoeVec3((0.0, 0.056810468435287476, -1.4559359550476074)), 'hairside_r_02_wj': NoeVec3((-0.002338740974664688, -0.04548327997326851, 0.04111995920538902)), 
+    'hair_root': NoeVec3((-0.03490658104419708, 0.0, -1.570796012878418)), 'hairback_c_01_wj': NoeVec3((0.0, 3.054326057434082, 1.570796012878418)), 'hairback_c_03_wj': NoeVec3((0.0, 0.13962629437446594, 0.0)), 'hairback_l_01_wj': NoeVec3((-2.5132739543914795, 0.1221729964017868, -1.483530044555664)), 
+    'hairback_l_03_wj': NoeVec3((0.0, 0.1221729964017868, 0.10471980273723602)), 'hairback_r_01_wj': NoeVec3((2.5132739543914795, 0.1221729964017868, -1.6580630540847778)), 'hairback_r_03_wj': NoeVec3((0.0, 0.1221729964017868, -0.10471980273723602))},
+    'WG4': {'lskirt_a_01_wj': NoeVec3((0.0, -0.0872664600610733, -1.570796012878418)), 'lskirt_b_01_wj': NoeVec3((-0.7853981852531433, -0.10471980273723602, -1.4486229419708252)), 'lskirt_c_01_wj': NoeVec3((-1.570796012878418, 0.0, -1.3089970350265503)), 
+    'lskirt_d_01_wj': NoeVec3((-2.3387410640716553, 0.1745329052209854, -1.3962630033493042)), 'lskirt_e_01_wj': NoeVec3((0.0, 2.8797929286956787, 1.570796012878418)), 'lskirt_f_01_wj': NoeVec3((2.3387410640716553, 0.1745329052209854, -1.7453290224075317)), 
+    'lskirt_g_01_wj': NoeVec3((1.570796012878418, 0.0, -1.832595944404602)), 'lskirt_h_01_wj': NoeVec3((0.7853981852531433, -0.10471980273723602, -1.6929689645767212)), 'skirt_a_01_wj': NoeVec3((0.0, -0.21816620230674744, -1.570796012878418)), 
+    'skirt_b_01_wj': NoeVec3((-0.8028513789176941, -0.22689279913902283, -1.3439040184020996)), 'skirt_b_02_wj': NoeVec3((0.0, 0.04363323003053665, 0.0)), 'skirt_c_01_wj': NoeVec3((-1.570796012878418, 0.0, -1.1519169807434082)), 'skirt_c_02_wj': NoeVec3((0.0, 0.0872664600610733, 0.0)), 
+    'skirt_d_01_wj': NoeVec3((-2.2863810062408447, 0.34033921360969543, -1.2042770385742188)), 'skirt_d_02_wj': NoeVec3((0.0, 0.2042035013437271, 0.0)), 'skirt_e_01_wj': NoeVec3((0.0, 2.6616270542144775, 1.570796012878418)), 'skirt_e_02_wj': NoeVec3((0.0, 0.16580629348754883, 0.0)), 
+    'skirt_f_01_wj': NoeVec3((2.2863810062408447, 0.34033921360969543, -1.9373149871826172)), 'skirt_f_02_wj': NoeVec3((0.0, 0.2042035013437271, 0.0)), 'skirt_g_01_wj': NoeVec3((1.570796012878418, 0.0, -1.9896750450134277)), 'skirt_g_02_wj': NoeVec3((0.0, 0.0872664600610733, 0.0)), 
+    'skirt_h_01_wj': NoeVec3((0.8028513789176941, -0.22689279913902283, -1.7976889610290527)), 'skirt_h_02_wj': NoeVec3((0.0, 0.04363323003053665, 0.0)), 'spine_wj': NoeVec3((0.0, 0.0, 1.570796012878418)), 'breast_c_wj': NoeVec3((0.0, 3.1415929794311523, 0.0)), 
+    'breast_l_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 'breast_r_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 'face_root': NoeVec3((0.0, 0.01745329052209854, 0.0)), 'hair_chara_root': NoeVec3((-0.01745329052209854, 0.0, -1.570796012878418)), 
+    'hairside_l_01_wj': NoeVec3((0.0, -0.12622219324111938, -1.6348329782485962)), 'hairside_l_02_wj': NoeVec3((0.0031066860537976027, -0.27029910683631897, 0.02275908924639225)), 'hairside_l_03_wj': NoeVec3((-0.00043633230961859226, 0.19624480605125427, -0.0011170109501108527)), 
+    'hairside_r_01_wj': NoeVec3((0.0, -0.1264490932226181, -1.534248948097229)), 'hairside_r_02_wj': NoeVec3((-0.00022689279285259545, -0.2704387903213501, -0.0017104230355471373)), 'hairside_r_03_wj': NoeVec3((-0.0042236968874931335, 0.19641940295696259, -0.010681410320103168)), 
+    'hair_root': NoeVec3((-0.03490658104419708, 0.0, -1.570796012878418)), 'hairback_c_01_wj': NoeVec3((0.0, 3.037169933319092, 1.570796012878418)), 'hairback_c_02_wj': NoeVec3((0.0, -0.07838273793458939, 0.0)), 'hairback_c_03_wj': NoeVec3((0.0, 0.03595377877354622, 0.0)), 
+    'hairback_c_04_wj': NoeVec3((0.0, 0.157306507229805, 0.0)), 'hairback_l_01_wj': NoeVec3((-2.5008649826049805, 0.10782639682292938, -1.5036189556121826)), 'hairback_l_02_wj': NoeVec3((-0.133657306432724, -0.07934267073869705, 0.025795970112085342)), 
+    'hairback_l_03_wj': NoeVec3((-0.09567894786596298, 0.0426383912563324, 0.014713129960000515)), 'hairback_l_04_wj': NoeVec3((0.0, 0.15067429840564728, -0.09096655994653702)), 'hairback_r_01_wj': NoeVec3((2.328339099884033, 0.10290460288524628, -1.6607329845428467)), 
+    'hairback_r_02_wj': NoeVec3((0.4272739887237549, -0.04237658903002739, -0.07597418129444122)), 'hairback_r_03_wj': NoeVec3((-0.2675414979457855, 0.014451329596340656, 0.04672246053814888)), 'hairback_r_04_wj': NoeVec3((0.0, 0.1584583967924118, 0.07962191849946976))},
+    'WG5': {'lskirt_a_01_wj': NoeVec3((0.0, -0.0872664600610733, -1.570796012878418)), 'lskirt_b_01_wj': NoeVec3((-0.7853981852531433, -0.10471980273723602, -1.4486229419708252)), 'lskirt_c_01_wj': NoeVec3((-1.570796012878418, 0.0, -1.3089970350265503)), 
+    'lskirt_d_01_wj': NoeVec3((-2.3387410640716553, 0.1745329052209854, -1.3962630033493042)), 'lskirt_e_01_wj': NoeVec3((0.0, 2.8797929286956787, 1.570796012878418)), 'lskirt_f_01_wj': NoeVec3((2.3387410640716553, 0.1745329052209854, -1.7453290224075317)), 
+    'lskirt_g_01_wj': NoeVec3((1.570796012878418, 0.0, -1.832595944404602)), 'lskirt_h_01_wj': NoeVec3((0.7853981852531433, -0.10471980273723602, -1.6929689645767212)), 'skirt_a_01_wj': NoeVec3((0.0, -0.21816620230674744, -1.570796012878418)), 
+    'skirt_b_01_wj': NoeVec3((-0.8028513789176941, -0.22689279913902283, -1.3439040184020996)), 'skirt_b_02_wj': NoeVec3((0.0, 0.04363323003053665, 0.0)), 'skirt_c_01_wj': NoeVec3((-1.570796012878418, 0.0, -1.1519169807434082)), 'skirt_c_02_wj': NoeVec3((0.0, 0.0872664600610733, 0.0)), 
+    'skirt_d_01_wj': NoeVec3((-2.2863810062408447, 0.34033921360969543, -1.2042770385742188)), 'skirt_d_02_wj': NoeVec3((0.0, 0.2042035013437271, 0.0)), 'skirt_e_01_wj': NoeVec3((0.0, 2.6616270542144775, 1.570796012878418)), 'skirt_e_02_wj': NoeVec3((0.0, 0.16580629348754883, 0.0)), 
+    'skirt_f_01_wj': NoeVec3((2.2863810062408447, 0.34033921360969543, -1.9373149871826172)), 'skirt_f_02_wj': NoeVec3((0.0, 0.2042035013437271, 0.0)), 'skirt_g_01_wj': NoeVec3((1.570796012878418, 0.0, -1.9896750450134277)), 'skirt_g_02_wj': NoeVec3((0.0, 0.0872664600610733, 0.0)), 
+    'skirt_h_01_wj': NoeVec3((0.8028513789176941, -0.22689279913902283, -1.7976889610290527)), 'skirt_h_02_wj': NoeVec3((0.0, 0.04363323003053665, 0.0)), 'spine_wj': NoeVec3((0.0, 0.0, 1.570796012878418)), 'breast_c_wj': NoeVec3((0.0, 3.1415929794311523, 0.0)), 
+    'breast_l_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 'breast_r_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 'face_root': NoeVec3((0.0, 0.01745329052209854, 0.0)), 'hair_chara_root': NoeVec3((-0.01745329052209854, 0.0, -1.570796012878418)), 
+    'hairside_l_01_wj': NoeVec3((0.0, -0.05331981182098389, -1.5734139680862427)), 'hairside_l_02_wj': NoeVec3((-0.008691739290952682, -0.14008009433746338, -0.160657599568367)), 'hairside_r_01_wj': NoeVec3((0.0, -0.05335471034049988, -1.5911120176315308)), 
+    'hairside_r_02_wj': NoeVec3((0.011885689571499825, -0.139347106218338, 0.22069689631462097)), 'hair_root': NoeVec3((-0.03490658104419708, 0.0, -1.570796012878418)), 'hairback_c_01_wj': NoeVec3((0.0, 2.8959031105041504, 1.570796012878418)), 'hairback_c_02_wj': NoeVec3((0.0, 0.10997319966554642, 0.0)), 
+    'hairback_c_03_wj': NoeVec3((0.0, 0.11510449647903442, 0.0)), 'hairback_c_04_wj': NoeVec3((0.0, 0.030281459912657738, 0.0)), 'hairback_l_01_wj': NoeVec3((-2.5132739543914795, 0.1221729964017868, -1.483530044555664)), 'hairback_l_03_wj': NoeVec3((0.0, 0.1221729964017868, 0.10471980273723602)), 
+    'hairback_r_01_wj': NoeVec3((2.5132739543914795, 0.1221729964017868, -1.6580630540847778)), 'hairback_r_03_wj': NoeVec3((0.0, 0.1221729964017868, -0.10471980273723602))},
+    'WG6': {'lskirt_a_01_wj': NoeVec3((0.0, -0.0872664600610733, -1.570796012878418)), 'lskirt_b_01_wj': NoeVec3((-0.7853981852531433, -0.10471980273723602, -1.4486229419708252)), 'lskirt_c_01_wj': NoeVec3((-1.570796012878418, 0.0, -1.3089970350265503)), 
+    'lskirt_d_01_wj': NoeVec3((-2.3387410640716553, 0.1745329052209854, -1.3962630033493042)), 'lskirt_e_01_wj': NoeVec3((0.0, 2.8797929286956787, 1.570796012878418)), 'lskirt_f_01_wj': NoeVec3((2.3387410640716553, 0.1745329052209854, -1.7453290224075317)), 
+    'lskirt_g_01_wj': NoeVec3((1.570796012878418, 0.0, -1.832595944404602)), 'lskirt_h_01_wj': NoeVec3((0.7853981852531433, -0.10471980273723602, -1.6929689645767212)), 'skirt_a_01_wj': NoeVec3((0.0, -0.21816620230674744, -1.570796012878418)), 
+    'skirt_b_01_wj': NoeVec3((-0.8028513789176941, -0.22689279913902283, -1.3439040184020996)), 'skirt_b_02_wj': NoeVec3((0.0, 0.04363323003053665, 0.0)), 'skirt_c_01_wj': NoeVec3((-1.570796012878418, 0.0, -1.1519169807434082)), 'skirt_c_02_wj': NoeVec3((0.0, 0.0872664600610733, 0.0)), 
+    'skirt_d_01_wj': NoeVec3((-2.2863810062408447, 0.34033921360969543, -1.2042770385742188)), 'skirt_d_02_wj': NoeVec3((0.0, 0.2042035013437271, 0.0)), 'skirt_e_01_wj': NoeVec3((0.0, 2.6616270542144775, 1.570796012878418)), 'skirt_e_02_wj': NoeVec3((0.0, 0.16580629348754883, 0.0)), 
+    'skirt_f_01_wj': NoeVec3((2.2863810062408447, 0.34033921360969543, -1.9373149871826172)), 'skirt_f_02_wj': NoeVec3((0.0, 0.2042035013437271, 0.0)), 'skirt_g_01_wj': NoeVec3((1.570796012878418, 0.0, -1.9896750450134277)), 'skirt_g_02_wj': NoeVec3((0.0, 0.0872664600610733, 0.0)), 
+    'skirt_h_01_wj': NoeVec3((0.8028513789176941, -0.22689279913902283, -1.7976889610290527)), 'skirt_h_02_wj': NoeVec3((0.0, 0.04363323003053665, 0.0)), 'spine_wj': NoeVec3((0.0, 0.0, 1.570796012878418)), 'breast_c_wj': NoeVec3((0.0, 3.1415929794311523, 0.0)), 
+    'breast_l_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 'breast_r_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 'face_root': NoeVec3((0.0, 0.01745329052209854, 0.0)), 'hair_chara_root': NoeVec3((-0.01745329052209854, 0.0, -1.570796012878418)), 
+    'hairside_l_01_wj': NoeVec3((0.0, -0.05071926862001419, -1.6083029508590698)), 'hairside_l_02_wj': NoeVec3((-0.005358160939067602, -0.19034560024738312, -0.10273010283708572)), 'hairside_l_03_wj': NoeVec3((0.14528119564056396, -0.12596039474010468, 0.6139370203018188)), 
+    'hairside_l_04_wj': NoeVec3((-0.19854870438575745, 0.6864728927612305, -0.6099228262901306)), 'hairside_r_01_wj': NoeVec3((0.0, -0.05071926862001419, -1.5332889556884766)), 'hairside_r_02_wj': NoeVec3((0.0029845130629837513, -0.19142769277095795, 0.05721189081668854)), 
+    'hairside_r_03_wj': NoeVec3((-0.1275137960910797, -0.12021829932928085, -0.5261644124984741)), 'hairside_r_04_wj': NoeVec3((0.18784980475902557, 0.6998072266578674, 0.5597270727157593)), 'hair_root': NoeVec3((-0.03490658104419708, 0.0, -1.570796012878418)), 
+    'hairback_c_01_wj': NoeVec3((0.0, -0.023177970200777054, -1.570796012878418)), 'hairback_c_02_wj': NoeVec3((0.0, 0.5400747060775757, 0.0)), 'hairback_c_03_wj': NoeVec3((0.0, -0.32155948877334595, 0.0)), 'hairback_c_04_wj': NoeVec3((0.0, -0.3722088932991028, 0.0)), 
+    'hairback_l_01_wj': NoeVec3((0.0018325960263609886, -0.03153809905052185, -1.4660769701004028)), 'hairback_l_02_wj': NoeVec3((0.0033510320354253054, 0.5454503297805786, 0.06023130938410759)), 'hairback_l_03_wj': NoeVec3((0.04712389037013054, -0.31642821431159973, -0.09744173288345337)), 
+    'hairback_l_04_wj': NoeVec3((-0.014660770073533058, -0.3607945144176483, 0.08148942142724991)), 'hairback_r_01_wj': NoeVec3((-0.00160570302978158, -0.023177970200777054, -1.6632989645004272)), 'hairback_r_02_wj': NoeVec3((-0.0037873650435358286, 0.5274385213851929, -0.08253662288188934)), 
+    'hairback_r_03_wj': NoeVec3((-0.04398230090737343, -0.30691608786582947, 0.09260717034339905)), 'hairback_r_04_wj': NoeVec3((0.008168141357600689, -0.3617194890975952, -0.04536110907793045))},
+    'WG7': {'lskirt_a_01_wj': NoeVec3((0.0, -0.0872664600610733, -1.570796012878418)), 'lskirt_b_01_wj': NoeVec3((-0.7853981852531433, -0.1047196015715599, -1.4486229419708252)), 'lskirt_c_01_wj': NoeVec3((-1.570796012878418, 0.0, -1.3089970350265503)), 
+    'lskirt_d_01_wj': NoeVec3((-2.3387410640716553, 0.1745329052209854, -1.3962630033493042)), 'lskirt_e_01_wj': NoeVec3((0.0, 2.8797929286956787, 1.570796012878418)), 'lskirt_f_01_wj': NoeVec3((2.3387410640716553, 0.1745329052209854, -1.7453290224075317)), 
+    'lskirt_g_01_wj': NoeVec3((1.570796012878418, 0.0, -1.832595944404602)), 'lskirt_h_01_wj': NoeVec3((0.7853981852531433, -0.1047196015715599, -1.6929689645767212)), 'skirt_a_01_wj': NoeVec3((0.0, -0.21816620230674744, -1.570796012878418)), 
+    'skirt_b_01_wj': NoeVec3((-0.8028513789176941, -0.22689279913902283, -1.3439040184020996)), 'skirt_b_02_wj': NoeVec3((0.0, 0.04363323003053665, 0.0)), 'skirt_c_01_wj': NoeVec3((-1.570796012878418, 0.0, -1.1519169807434082)), 'skirt_c_02_wj': NoeVec3((0.0, 0.0872664600610733, 0.0)), 
+    'skirt_d_01_wj': NoeVec3((-2.2863810062408447, 0.34033921360969543, -1.2042770385742188)), 'skirt_d_02_wj': NoeVec3((2.4621709115990598e-08, 0.2042035013437271, 0.0)), 'skirt_e_01_wj': NoeVec3((-4.768378971675702e-07, 2.6616270542144775, 1.570796012878418)), 
+    'skirt_e_02_wj': NoeVec3((0.0, 0.16580629348754883, 0.0)), 'skirt_f_01_wj': NoeVec3((2.2863810062408447, 0.34033921360969543, -1.9373149871826172)), 'skirt_f_02_wj': NoeVec3((0.0, 0.2042035013437271, 0.0)), 'skirt_g_01_wj': NoeVec3((1.570796012878418, 8.940693163594915e-08, -1.9896750450134277)), 
+    'skirt_g_02_wj': NoeVec3((0.0, 0.0872664600610733, 0.0)), 'skirt_h_01_wj': NoeVec3((0.8028513789176941, -0.22689279913902283, -1.7976889610290527)), 'skirt_h_02_wj': NoeVec3((1.9765849401665037e-08, 0.04363323003053665, 0.0)), 'spine_wj': NoeVec3((0.0, 0.0, 1.570796012878418)), 
+    'breast_c_wj': NoeVec3((0.0, 3.1415929794311523, 0.0)), 'breast_l_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 'breast_r_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 'hair_chara_root': NoeVec3((-0.050385911017656326, 0.0020432400051504374, -1.610834002494812)), 
+    'hairside_l_01_wj': NoeVec3((-0.784270703792572, 0.042309220880270004, -1.6196880340576172)), 'hairside_l_02_wj': NoeVec3((0.037803828716278076, -0.2680476903915405, -0.2901434898376465)), 'hairside_r_01_wj': NoeVec3((0.7926954030990601, 0.04149625077843666, -1.431264042854309)), 
+    'hairside_r_02_wj': NoeVec3((-0.052062999457120895, -0.3225542902946472, 0.23261749744415283)), 'hairtwintail_l_01_wj': NoeVec3((3.101327896118164, 0.04660448059439659, -1.4349240064620972)), 'hairtwintail_l_02_wj': NoeVec3((0.041588399559259415, -0.004207133781164885, 0.16269420087337494)), 
+    'hairtwintail_a_l_01_wj': NoeVec3((0.01139593031257391, 3.0963189601898193, -3.202522039413452)), 'hairtwintail_a_l_02_wj': NoeVec3((-9.536740890325746e-07, 0.13923540711402893, 0.002703985897824168)), 'hairtwintail_b_l_01_wj': NoeVec3((-0.04509685933589935, 0.010574930347502232, -0.07445521652698517)), 
+    'hairtwintail_b_l_02_wj': NoeVec3((3.450568101470708e-06, 0.0013176429783925414, 0.009059794247150421)), 'hairtwintail_r_01_wj': NoeVec3((0.048352599143981934, 0.04737957939505577, -1.626518964767456)), 'hairtwintail_r_02_wj': NoeVec3((-0.04159066826105118, 0.004208722151815891, 0.1626943051815033)), 
+    'hairtwintail_a_r_01_wj': NoeVec3((3.1301960945129395, -0.045268431305885315, -0.06093014031648636)), 'hairtwintail_a_r_02_wj': NoeVec3((-1.9072609802606166e-06, -0.13923560082912445, 0.0027041779831051826)), 'hairtwintail_b_r_01_wj': NoeVec3((0.04507505148649216, -0.010575749911367893, -0.07445575296878815)), 
+    'hairtwintail_b_r_02_wj': NoeVec3((9.293372386309784e-06, -0.001317501999437809, 0.009059898555278778)), 'hair_root': NoeVec3((-0.03490640968084335, 0.0, -1.570796012878418)), 'hairback_c_01_wj': NoeVec3((0.0, 3.054326057434082, 1.570796012878418)), 'hairback_c_03_wj': NoeVec3((0.0, 0.13962629437446594, 0.0)), 
+    'hairback_l_01_wj': NoeVec3((-2.5132739543914795, 0.1221729964017868, -1.483530044555664)), 'hairback_l_03_wj': NoeVec3((0.0, 0.1221729964017868, 0.10471980273723602)), 'hairback_r_01_wj': NoeVec3((2.5132739543914795, 0.1221729964017868, -1.6580630540847778)), 
+    'hairback_r_03_wj': NoeVec3((3.377945034799268e-08, 0.1221729964017868, -0.1047196015715599))},
+    'YRA': {'lskirt_a_01_wj': NoeVec3((0.0, -0.0872664600610733, -1.570796012878418)), 'lskirt_b_01_wj': NoeVec3((-0.7853981852531433, -0.10471980273723602, -1.4486229419708252)), 'lskirt_c_01_wj': NoeVec3((-1.570796012878418, 0.0, -1.3089970350265503)), 
+    'lskirt_d_01_wj': NoeVec3((-2.3387410640716553, 0.1745329052209854, -1.3962630033493042)), 'lskirt_e_01_wj': NoeVec3((0.0, 2.8797929286956787, 1.570796012878418)), 'lskirt_f_01_wj': NoeVec3((2.3387410640716553, 0.1745329052209854, -1.7453290224075317)), 
+    'lskirt_g_01_wj': NoeVec3((1.570796012878418, 0.0, -1.832595944404602)), 'lskirt_h_01_wj': NoeVec3((0.7853981852531433, -0.10471980273723602, -1.6929689645767212)), 'skirt_a_01_wj': NoeVec3((0.0, -0.0872664600610733, -1.570796012878418)), 
+    'skirt_b_01_wj': NoeVec3((-0.7853981852531433, -0.10471980273723602, -1.4660769701004028)), 'skirt_c_01_wj': NoeVec3((-1.570796012878418, 0.0, -1.3089970350265503)), 'skirt_c_02_wj': NoeVec3((0.0, 0.0872664600610733, 0.0)), 'skirt_d_01_wj': NoeVec3((-2.3387410640716553, 0.1745329052209854, -1.3962630033493042)), 
+    'skirt_e_01_wj': NoeVec3((0.0, 2.8797929286956787, 1.570796012878418)), 'skirt_f_01_wj': NoeVec3((2.3387410640716553, 0.1745329052209854, -1.7453290224075317)), 'skirt_g_01_wj': NoeVec3((1.570796012878418, 0.0, -1.832595944404602)), 'skirt_g_02_wj': NoeVec3((0.0, 0.0872664600610733, 0.0)), 
+    'skirt_h_01_wj': NoeVec3((0.7853981852531433, -0.10471980273723602, -1.6755160093307495)), 'spine_wj': NoeVec3((0.0, 0.0, 1.570796012878418)), 'breast_c_wj': NoeVec3((0.0, 3.1415929794311523, 0.0)), 'breast_l_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 
+    'breast_r_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 'face_root': NoeVec3((0.0, 0.01745329052209854, 0.0)), 'hair_chara_root': NoeVec3((-0.01745329052209854, 0.0, -1.570796012878418)), 'hair_c_01_wj': NoeVec3((0.0, -0.0872664600610733, -1.570796012878418)), 
+    'hair_l_01_wj': NoeVec3((-0.7853981852531433, 0.1745329052209854, -1.3089970350265503)), 'hair_r_01_wj': NoeVec3((0.7853981852531433, 0.1745329052209854, -1.832595944404602)), 'hair_t_01_wj': NoeVec3((3.0083720684051514, 0.37980979681015015, 1.2239190340042114)), 
+    'hairside_l_01_wj': NoeVec3((0.0, -0.19198620319366455, -1.815142035484314)), 'hairside_r_01_wj': NoeVec3((0.0, -0.19198620319366455, -1.326449990272522)), 'hairsideback_l_01_wj': NoeVec3((-0.7853981852531433, 0.1745329052209854, -1.3089970350265503)), 
+    'hairsideback_r_01_wj': NoeVec3((0.7853981852531433, 0.1745329052209854, -1.832595944404602)), 'hair_root': NoeVec3((-0.03490658104419708, 0.0, -1.570796012878418)), 'hairback_c_01_wj': NoeVec3((0.0, 3.054326057434082, 1.570796012878418)), 
+    'hairback_l_01_wj': NoeVec3((-2.5132739543914795, 0.1221729964017868, -1.483530044555664)), 'hairback_r_01_wj': NoeVec3((2.5132739543914795, 0.1221729964017868, -1.6580630540847778))},
+    'YRC': {'lskirt_a_01_wj': NoeVec3((0.0, -0.0872664600610733, -1.570796012878418)), 'lskirt_b_01_wj': NoeVec3((-0.7853981852531433, -0.10471980273723602, -1.4486229419708252)), 'lskirt_c_01_wj': NoeVec3((-1.570796012878418, 0.0, -1.3089970350265503)), 
+    'lskirt_d_01_wj': NoeVec3((-2.3387410640716553, 0.1745329052209854, -1.3962630033493042)), 'lskirt_e_01_wj': NoeVec3((0.0, 2.8797929286956787, 1.570796012878418)), 'lskirt_f_01_wj': NoeVec3((2.3387410640716553, 0.1745329052209854, -1.7453290224075317)), 
+    'lskirt_g_01_wj': NoeVec3((1.570796012878418, 0.0, -1.832595944404602)), 'lskirt_h_01_wj': NoeVec3((0.7853981852531433, -0.10471980273723602, -1.6929689645767212)), 'skirt_a_01_wj': NoeVec3((0.0, -0.0872664600610733, -1.570796012878418)), 
+    'skirt_b_01_wj': NoeVec3((-0.7853981852531433, -0.10471980273723602, -1.4660769701004028)), 'skirt_c_01_wj': NoeVec3((-1.570796012878418, 0.0, -1.3089970350265503)), 'skirt_c_02_wj': NoeVec3((0.0, 0.0872664600610733, 0.0)), 
+    'skirt_d_01_wj': NoeVec3((-2.3387410640716553, 0.1745329052209854, -1.3962630033493042)), 'skirt_e_01_wj': NoeVec3((0.0, 2.8797929286956787, 1.570796012878418)), 'skirt_f_01_wj': NoeVec3((2.3387410640716553, 0.1745329052209854, -1.7453290224075317)), 
+    'skirt_g_01_wj': NoeVec3((1.570796012878418, 0.0, -1.832595944404602)), 'skirt_g_02_wj': NoeVec3((0.0, 0.0872664600610733, 0.0)), 'skirt_h_01_wj': NoeVec3((0.7853981852531433, -0.10471980273723602, -1.6755160093307495)), 'spine_wj': NoeVec3((0.0, 0.0, 1.570796012878418)), 
+    'breast_c_wj': NoeVec3((0.0, 3.1415929794311523, 0.0)), 'breast_l_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 'breast_r_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 'face_root': NoeVec3((0.0, 0.01745329052209854, 0.0)), 
+    'hair_chara_root': NoeVec3((-0.01745329052209854, 0.0, -1.570796012878418)), 'hair_c_01_wj': NoeVec3((0.0, -0.3317365050315857, -1.570796012878418)), 'hair_l_01_wj': NoeVec3((-0.7958701252937317, 0.09674359858036041, -1.3962630033493042)), 
+    'hair_r_01_wj': NoeVec3((0.7958701252937317, 0.09673783928155899, -1.7453290224075317)), 'hairosage_l_01_wj': NoeVec3((-0.3490658104419708, 0.25307270884513855, -0.9128072261810303)), 'hairosage_l_02_wj': NoeVec3((0.0, 0.0, -0.5929285287857056)), 
+    'hairosage_r_01_wj': NoeVec3((0.3490658104419708, 0.25307270884513855, -2.211332082748413)), 'hairosage_r_02_wj': NoeVec3((0.0, 0.0, 0.5929232239723206)), 'hairside_l_01_wj': NoeVec3((-0.19198620319366455, 0.01745329052209854, -1.483530044555664)), 
+    'hairside_r_01_wj': NoeVec3((-0.19198620319366455, -0.01745329052209854, -1.6580630540847778)), 'hair_root': NoeVec3((-0.03490658104419708, 0.0, -1.570796012878418)), 'hairback_c_01_wj': NoeVec3((0.0, 3.054326057434082, 1.570796012878418)), 
+    'hairback_l_01_wj': NoeVec3((-2.5132739543914795, 0.1221729964017868, -1.483530044555664)), 'hairback_r_01_wj': NoeVec3((2.5132739543914795, 0.1221729964017868, -1.6580630540847778))},
+    'YRK': {'lskirt_a_01_wj': NoeVec3((0.0, -0.0872664600610733, -1.570796012878418)), 'lskirt_b_01_wj': NoeVec3((-0.7853981852531433, -0.10471980273723602, -1.4486229419708252)), 'lskirt_c_01_wj': NoeVec3((-1.570796012878418, 0.0, -1.3089970350265503)), 
+    'lskirt_d_01_wj': NoeVec3((-2.3387410640716553, 0.1745329052209854, -1.3962630033493042)), 'lskirt_e_01_wj': NoeVec3((0.0, 2.8797929286956787, 1.570796012878418)), 'lskirt_f_01_wj': NoeVec3((2.3387410640716553, 0.1745329052209854, -1.7453290224075317)), 
+    'lskirt_g_01_wj': NoeVec3((1.570796012878418, 0.0, -1.832595944404602)), 'lskirt_h_01_wj': NoeVec3((0.7853981852531433, -0.10471980273723602, -1.6929689645767212)), 'skirt_a_01_wj': NoeVec3((0.0, -0.0872664600610733, -1.570796012878418)), 
+    'skirt_b_01_wj': NoeVec3((-0.7853981852531433, -0.10471980273723602, -1.4660769701004028)), 'skirt_c_01_wj': NoeVec3((-1.570796012878418, 0.0, -1.3089970350265503)), 'skirt_c_02_wj': NoeVec3((0.0, 0.0872664600610733, 0.0)), 
+    'skirt_d_01_wj': NoeVec3((-2.3387410640716553, 0.1745329052209854, -1.3962630033493042)), 'skirt_e_01_wj': NoeVec3((0.0, 2.8797929286956787, 1.570796012878418)), 'skirt_f_01_wj': NoeVec3((2.3387410640716553, 0.1745329052209854, -1.7453290224075317)), 
+    'skirt_g_01_wj': NoeVec3((1.570796012878418, 0.0, -1.832595944404602)), 'skirt_g_02_wj': NoeVec3((0.0, 0.0872664600610733, 0.0)), 'skirt_h_01_wj': NoeVec3((0.7853981852531433, -0.10471980273723602, -1.6755160093307495)), 'spine_wj': NoeVec3((0.0, 0.0, 1.570796012878418)), 
+    'breast_c_wj': NoeVec3((0.0, 3.1415929794311523, 0.0)), 'breast_l_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 'breast_r_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 'face_root': NoeVec3((0.0, 0.01745329052209854, 0.0)), 
+    'hair_chara_root': NoeVec3((-0.01745329052209854, 0.0, -1.570796012878418)), 'hair_c_01_wj': NoeVec3((0.0, -0.0872664600610733, -1.570796012878418)), 'hair_l_01_wj': NoeVec3((-0.7853981852531433, 0.1745329052209854, -1.3089970350265503)), 
+    'hair_r_01_wj': NoeVec3((0.7853981852531433, 0.1745329052209854, 4.450590133666992)), 'hairside_l_01_wj': NoeVec3((0.0, -0.0872664600610733, -1.6580630540847778)), 'hairside_l_02_wj': NoeVec3((0.0, -0.1745329052209854, 0.0)), 
+    'hairside_l_03_wj': NoeVec3((0.0, -0.0872664600610733, 0.0)), 'hairside_r_01_wj': NoeVec3((0.0, -0.0872664600610733, -1.483530044555664)), 'hairside_r_02_wj': NoeVec3((0.0, -0.1745329052209854, 0.0)), 'hairside_r_03_wj': NoeVec3((0.0, -0.0872664600610733, 0.0)), 
+    'ribbon_l_01_wj': NoeVec3((0.14091910421848297, 0.1607035994529724, 0.11081510037183762)), 'ribbon_r_01_wj': NoeVec3((-0.14091910421848297, 0.1607035994529724, 3.0307819843292236)), 'hair_root': NoeVec3((-0.03490658104419708, 0.0, -1.570796012878418)), 
+    'hairback_c_01_wj': NoeVec3((0.0, 3.054326057434082, 1.570796012878418)), 'hairback_l_01_wj': NoeVec3((-2.5132739543914795, 0.1221729964017868, -1.483530044555664)), 'hairback_r_01_wj': NoeVec3((2.5132739543914795, 0.1221729964017868, -1.6580630540847778))},
+    'YRY': {'lskirt_a_01_wj': NoeVec3((0.0, -0.0872664600610733, -1.570796012878418)), 'lskirt_b_01_wj': NoeVec3((-0.7853981852531433, -0.10471980273723602, -1.4486229419708252)), 'lskirt_c_01_wj': NoeVec3((-1.570796012878418, 0.0, -1.3089970350265503)), 
+    'lskirt_d_01_wj': NoeVec3((-2.3387410640716553, 0.1745329052209854, -1.3962630033493042)), 'lskirt_e_01_wj': NoeVec3((0.0, 2.8797929286956787, 1.570796012878418)), 'lskirt_f_01_wj': NoeVec3((2.3387410640716553, 0.1745329052209854, -1.7453290224075317)), 
+    'lskirt_g_01_wj': NoeVec3((1.570796012878418, 0.0, -1.832595944404602)), 'lskirt_h_01_wj': NoeVec3((0.7853981852531433, -0.10471980273723602, -1.6929689645767212)), 'skirt_a_01_wj': NoeVec3((0.0, -0.0872664600610733, -1.570796012878418)), 
+    'skirt_b_01_wj': NoeVec3((-0.7853981852531433, -0.10471980273723602, -1.4660769701004028)), 'skirt_c_01_wj': NoeVec3((-1.570796012878418, 0.0, -1.3089970350265503)), 'skirt_c_02_wj': NoeVec3((0.0, 0.0872664600610733, 0.0)), 
+    'skirt_d_01_wj': NoeVec3((-2.3387410640716553, 0.1745329052209854, -1.3962630033493042)), 'skirt_e_01_wj': NoeVec3((0.0, 2.8797929286956787, 1.570796012878418)), 'skirt_f_01_wj': NoeVec3((2.3387410640716553, 0.1745329052209854, -1.7453290224075317)), 
+    'skirt_g_01_wj': NoeVec3((1.570796012878418, 0.0, -1.832595944404602)), 'skirt_g_02_wj': NoeVec3((0.0, 0.0872664600610733, 0.0)), 'skirt_h_01_wj': NoeVec3((0.7853981852531433, -0.10471980273723602, -1.6755160093307495)), 'spine_wj': NoeVec3((0.0, 0.0, 1.570796012878418)), 
+    'breast_c_wj': NoeVec3((0.0, 3.1415929794311523, 0.0)), 'breast_l_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 'breast_r_wj': NoeVec3((0.0, -1.3962630033493042, -3.1415929794311523)), 'face_root': NoeVec3((0.0, 0.01745329052209854, 0.0)), 
+    'hair_chara_root': NoeVec3((-0.01745329052209854, 0.0, -1.570796012878418)), 'hair_c_01_wj': NoeVec3((0.0, -0.0872664600610733, -1.570796012878418)), 'hair_l_01_wj': NoeVec3((-0.8522722125053406, 0.20905029773712158, -1.5035719871520996)), 
+    'hair_r_01_wj': NoeVec3((0.8522791862487793, 0.20905549824237823, 4.658073902130127)), 'hairback02_l_01_wj': NoeVec3((0.006805458106100559, 0.7035037875175476, -1.5682499408721924)), 'hairback02_r_01_wj': NoeVec3((0.007229119073599577, 0.7700269818305969, -1.567620038986206)), 
+    'hairside02_l_01_wj': NoeVec3((1.686110019683838, -0.6346017122268677, -2.0487899780273438)), 'hairside02_r_01_wj': NoeVec3((1.2001229524612427, -0.6244019865989685, -1.0632719993591309)), 'hairside_l_01_wj': NoeVec3((0.04065081104636192, -0.3347192108631134, -1.996917963027954)), 
+    'hairside_r_01_wj': NoeVec3((-0.0291555505245924, -0.34686151146888733, -1.1593539714813232)), 'hair_root': NoeVec3((-0.03490658104419708, 0.0, -1.570796012878418)), 'hairback_c_01_wj': NoeVec3((0.0, 3.054326057434082, 1.570796012878418)), 
+    'hairback_l_01_wj': NoeVec3((-2.5132739543914795, 0.1221729964017868, -1.483530044555664)), 'hairback_r_01_wj': NoeVec3((2.5132739543914795, 0.1221729964017868, -1.6580630540847778))}}
+    boneRotExtra = {'ARH_002': {'ribbon_chara_root': NoeVec3((0.1745329052209854, 0.0, -1.570796012878418))}, 'ARI_002': {'ribbon_chara_root': NoeVec3((0.0, 3.1415929794311523, 0.0))}, 'ART_002': {'ribbon_chara_root': NoeVec3((0.0, 3.1415929794311523, 0.0))},
+    'GCG_002': {'ribbon_chara_root': NoeVec3((0.0, 0.0, -1.570796012878418))}, 'GCM_002': {'ribbon_chara_root': NoeVec3((0.0, 0.0, -1.570796012878418))}}
+    return boneRot, boneRotExtra
 
 def initF2XHashDict():
-    hashDict = {0xCC71E092:"CMN_EYES_CENTER_D", 0xEB62BACB:"CMN_EYES_CENTER_U", 0x3DA92482:"CMN_EYES_DOWN", 0x20B63BDB:"CMN_EYES_DOWN_LEFT", 0x1BF515A6:"CMN_EYES_DOWN_LEFT_M",
-    0xAD70A0B9:"CMN_EYES_DOWN_M", 0xAB1940E9:"CMN_EYES_DOWN_RIGHT", 0x1F73D792:"CMN_EYES_DOWN_RIGHT_M", 0x4131C6CE:"CMN_EYES_LEFT", 0x0063C185:"CMN_EYES_LEFT_M", 0xAC58836D:"CMN_EYES_MOVE_L_R",
-    0x04342A94:"CMN_EYES_MOVE_U_D", 0x68894937:"CMN_EYES_MOVE_UL_DR", 0xE83BC978:"CMN_EYES_MOVE_UR_DL", 0xDEA33C57:"CMN_EYES_RESET", 0x23C0B0F0:"CMN_EYES_RIGHT", 0x5EC07882:"CMN_EYES_RIGHT_M",
-    0xB2FC99A0:"CMN_EYES_UP", 0x2C50E37F:"CMN_EYES_UP_LEFT", 0x2BF0AFE2:"CMN_EYES_UP_LEFT_M", 0x99FCBB7C:"CMN_EYES_UP_M", 0xA94A7B5E:"CMN_EYES_UP_RIGHT", 0xE9024D9F:"CMN_EYES_UP_RIGHT_M",
-    0x5248F064:"CMN_HAND_BOTTLE", 0x8941AEAC:"CMN_HAND_CHOP", 0x4EDB7807:"CMN_HAND_CLOSE", 0x63AA275F:"CMN_HAND_FAN", 0xBEEEA116:"CMN_HAND_FLASHLIGHT", 0x51946790:"CMN_HAND_FOX",
-    0x9A14C085:"CMN_HAND_FULLOPEN", 0x135DAC82:"CMN_HAND_GOOD", 0xC6C3F044:"CMN_HAND_GUN", 0xEB7A8562:"CMN_HAND_HEART", 0x7B5BB67A:"CMN_HAND_HOLD", 0xED31BAC8:"CMN_HAND_MIC",
-    0xF60C8D75:"CMN_HAND_NEGI", 0xF79E5B56:"CMN_HAND_NORMAL", 0x74C8C7E5:"CMN_HAND_OK", 0x05595758:"CMN_HAND_ONE", 0xE75D0A15:"CMN_HAND_OPEN", 0x24A93124:"CMN_HAND_PEACE",
-    0xCC8E9920:"CMN_HAND_PEACECLOSE", 0xB838F585:"CMN_HAND_PHONE", 0x47171BDD:"CMN_HAND_PICK", 0xB5918A0C:"CMN_HAND_PICK2", 0xC8CA0A99:"CMN_HAND_PLATE", 0x14FE02BF:"CMN_HAND_PUNCH",
-    0xD122599A:"CMN_HAND_RESET", 0x151E3BBA:"CMN_HAND_SIZEN", 0x84E43E6B:"CMN_HAND_THREE", 0xA48BA7F5:"MIK_FACE_ADMIRATION", 0x1925F549:"MIK_FACE_ADMIRATION_CL", 0xDC1AF4F8:"MIK_FACE_CLARIFYING",
-    0xB0800D79:"MIK_FACE_CLARIFYING_CL", 0x3453BE04:"MIK_FACE_CLOSE", 0xAC364D56:"MIK_FACE_COOL", 0xC78E8DA1:"MIK_FACE_COOL_CL", 0x1E5A8164:"MIK_FACE_DAZZLING", 0x5601694D:"MIK_FACE_DAZZLING_CL",
-    0x4486321E:"MIK_FACE_EYEBROW_UP_LEFT", 0x2A884ED5:"MIK_FACE_EYEBROW_UP_LEFT_CL", 0x96C7FD2A:"MIK_FACE_EYEBROW_UP_RIGHT", 0xD5EAC491:"MIK_FACE_EYEBROW_UP_RIGHT_CL",
-    0xB5C228D2:"MIK_FACE_GENKI", 0x7116FF76:"MIK_FACE_GENKI_CL", 0x8D88857E:"MIK_FACE_GENTLE", 0x35A03B75:"MIK_FACE_GENTLE_CL", 0x9CA098A0:"MIK_FACE_KIRI", 0xD0423BB1:"MIK_FACE_KIRI_CL",
-    0xD1EE03AD:"MIK_FACE_KOMARIEGAO", 0xCE74137C:"MIK_FACE_KOMARIWARAI", 0x81B7238D:"MIK_FACE_KOMARIWARAI_CL", 0x4BD9C988:"MIK_FACE_KONWAKU", 0xC1710C97:"MIK_FACE_KONWAKU_CL",
-    0x0BA4A548:"MIK_FACE_KUMON", 0x7891EAB3:"MIK_FACE_KUMON_CL", 0x351E8FB3:"MIK_FACE_KUTSUU", 0xCD915DF7:"MIK_FACE_KUTSUU_CL", 0x67921A1C:"MIK_FACE_LASCIVIOUS",
-    0xF4D467F3:"MIK_FACE_LASCIVIOUS_CL", 0x0B423D16:"MIK_FACE_LAUGH", 0x7FA01BDB:"MIK_FACE_NAGASI", 0x6BBC2A4E:"MIK_FACE_NAGASI_CL", 0x9619BB34:"MIK_FACE_NAKI", 0x0655CE85:"MIK_FACE_NAKI_CL",
-    0xA69F3640:"MIK_FACE_NAYAMI", 0xBD0BC34D:"MIK_FACE_NAYAMI_CL", 0xAADAC5FD:"MIK_FACE_OMOU", 0x30D08CEE:"MIK_FACE_OMOU_CL", 0x1C071A15:"MIK_FACE_RESET", 0xD7C1DA42:"MIK_FACE_SAD",
-    0x70C43C9D:"MIK_FACE_SAD_CL", 0xE11659A5:"MIK_FACE_SETTLED", 0xAE1054D5:"MIK_FACE_SETTLED_CL", 0x9E697E02:"MIK_FACE_SETUNA", 0x2BFFC1CB:"MIK_FACE_SETUNA_CL", 0x0EE65D7B:"MIK_FACE_SMILE",
-    0xC65DCBCB:"MIK_FACE_SMILE_CL", 0x68C2A780:"MIK_FACE_STRONG", 0x038594DF:"MIK_FACE_STRONG_CL", 0xA1D6ECD7:"MIK_FACE_SUPSERIOUS", 0x3667062A:"MIK_FACE_SUPSERIOUS_CL",
-    0x6DFA429B:"MIK_FACE_SURPRISE", 0x6EF0F796:"MIK_FACE_SURPRISE_CL", 0x0E318E47:"MIK_FACE_TSUYOKIWARAI", 0x942B7539:"MIK_FACE_TSUYOKIWARAI_CL", 0x369176D6:"MIK_FACE_UTURO",
-    0xE704376B:"MIK_FACE_UTURO_CL", 0xD86E2250:"MIK_FACE_WINK_L", 0x37C0C575:"MIK_FACE_WINK_R", 0x91E4A429:"MIK_FACE_WINKG_L", 0xAFC80288:"MIK_FACE_WINKG_R", 0x60943A41:"MIK_FACE_YARU",
-    0x1BC8C7F8:"MIK_FACE_YARU_CL", 0x8D679789:"MIK_KUCHI_A", 0x27256E52:"MIK_KUCHI_CHU", 0x9834C866:"MIK_KUCHI_E", 0x33838A11:"MIK_KUCHI_E_DOWN", 0xC288A2B6:"MIK_KUCHI_HAMISE",
-    0x2EE45D78:"MIK_KUCHI_HAMISE_DOWN", 0xD42ACE8B:"MIK_KUCHI_HAMISE_E", 0xBD509253:"MIK_KUCHI_HE", 0x8C96BE4C:"MIK_KUCHI_HE_S", 0xD1CC9C6B:"MIK_KUCHI_HERAHERA", 0x5FED5E14:"MIK_KUCHI_I",
-    0xAAD5F001:"MIK_KUCHI_MOGUMOGU", 0xEDEAD6C9:"MIK_KUCHI_NEKO", 0x8AAAB09E:"MIK_KUCHI_NEUTRAL", 0xB9808D8F:"MIK_KUCHI_NIYA", 0x2B9AA94D:"MIK_KUCHI_O", 0xE472692C:"MIK_KUCHI_PSP_A",
-    0x4A88205A:"MIK_KUCHI_PSP_E", 0xAA2BD9D4:"MIK_KUCHI_PSP_NIYA", 0x1444FEAA:"MIK_KUCHI_PSP_NIYARI", 0x64030BB3:"MIK_KUCHI_PSP_O", 0x72354540:"MIK_KUCHI_PSP_SURPRISE",
-    0x61198CF4:"MIK_KUCHI_RESET", 0x9218C1AC:"MIK_KUCHI_SAKEBI", 0x57037C4B:"MIK_KUCHI_SAKEBI_L", 0x932BBDAC:"MIK_KUCHI_SANKAKU", 0x23EC5921:"MIK_KUCHI_SHIKAKU", 0x349493AB:"MIK_KUCHI_SMILE",
-    0x48A15672:"MIK_KUCHI_SMILE_L", 0x47BB071D:"MIK_KUCHI_SURPRISE", 0x6BF6E5B4:"MIK_KUCHI_U"}
+    hashDict = {0xCC71E092: 'CMN_EYES_CENTER_D', 0xEB62BACB: 'CMN_EYES_CENTER_U', 0x3DA92482: 'CMN_EYES_DOWN', 0x20B63BDB: 'CMN_EYES_DOWN_LEFT', 0x1BF515A6: 'CMN_EYES_DOWN_LEFT_M',
+    0xAD70A0B9: 'CMN_EYES_DOWN_M', 0xAB1940E9: 'CMN_EYES_DOWN_RIGHT', 0x1F73D792: 'CMN_EYES_DOWN_RIGHT_M', 0x4131C6CE: 'CMN_EYES_LEFT', 0x0063C185: 'CMN_EYES_LEFT_M', 0xAC58836D: 'CMN_EYES_MOVE_L_R',
+    0x04342A94: 'CMN_EYES_MOVE_U_D', 0x68894937: 'CMN_EYES_MOVE_UL_DR', 0xE83BC978: 'CMN_EYES_MOVE_UR_DL', 0xDEA33C57: 'CMN_EYES_RESET', 0x23C0B0F0: 'CMN_EYES_RIGHT', 0x5EC07882: 'CMN_EYES_RIGHT_M',
+    0xB2FC99A0: 'CMN_EYES_UP', 0x2C50E37F: 'CMN_EYES_UP_LEFT', 0x2BF0AFE2: 'CMN_EYES_UP_LEFT_M', 0x99FCBB7C: 'CMN_EYES_UP_M', 0xA94A7B5E: 'CMN_EYES_UP_RIGHT', 0xE9024D9F: 'CMN_EYES_UP_RIGHT_M',
+    0x5248F064: 'CMN_HAND_BOTTLE', 0x8941AEAC: 'CMN_HAND_CHOP', 0x4EDB7807: 'CMN_HAND_CLOSE', 0x63AA275F: 'CMN_HAND_FAN', 0xBEEEA116: 'CMN_HAND_FLASHLIGHT', 0x51946790: 'CMN_HAND_FOX',
+    0x9A14C085: 'CMN_HAND_FULLOPEN', 0x135DAC82: 'CMN_HAND_GOOD', 0xC6C3F044: 'CMN_HAND_GUN', 0xEB7A8562: 'CMN_HAND_HEART', 0x7B5BB67A: 'CMN_HAND_HOLD', 0xED31BAC8: 'CMN_HAND_MIC',
+    0xF60C8D75: 'CMN_HAND_NEGI', 0xF79E5B56: 'CMN_HAND_NORMAL', 0x74C8C7E5: 'CMN_HAND_OK', 0x05595758: 'CMN_HAND_ONE', 0xE75D0A15: 'CMN_HAND_OPEN', 0x24A93124: 'CMN_HAND_PEACE',
+    0xCC8E9920: 'CMN_HAND_PEACECLOSE', 0xB838F585: 'CMN_HAND_PHONE', 0x47171BDD: 'CMN_HAND_PICK', 0xB5918A0C: 'CMN_HAND_PICK2', 0xC8CA0A99: 'CMN_HAND_PLATE', 0x14FE02BF: 'CMN_HAND_PUNCH',
+    0xD122599A: 'CMN_HAND_RESET', 0x151E3BBA: 'CMN_HAND_SIZEN', 0x84E43E6B: 'CMN_HAND_THREE', 0xA48BA7F5: 'MIK_FACE_ADMIRATION', 0x1925F549: 'MIK_FACE_ADMIRATION_CL', 0xDC1AF4F8: 'MIK_FACE_CLARIFYING',
+    0xB0800D79: 'MIK_FACE_CLARIFYING_CL', 0x3453BE04: 'MIK_FACE_CLOSE', 0xAC364D56: 'MIK_FACE_COOL', 0xC78E8DA1: 'MIK_FACE_COOL_CL', 0x1E5A8164: 'MIK_FACE_DAZZLING', 0x5601694D: 'MIK_FACE_DAZZLING_CL',
+    0x4486321E: 'MIK_FACE_EYEBROW_UP_LEFT', 0x2A884ED5: 'MIK_FACE_EYEBROW_UP_LEFT_CL', 0x96C7FD2A: 'MIK_FACE_EYEBROW_UP_RIGHT', 0xD5EAC491: 'MIK_FACE_EYEBROW_UP_RIGHT_CL',
+    0xB5C228D2: 'MIK_FACE_GENKI', 0x7116FF76: 'MIK_FACE_GENKI_CL', 0x8D88857E: 'MIK_FACE_GENTLE', 0x35A03B75: 'MIK_FACE_GENTLE_CL', 0x9CA098A0: 'MIK_FACE_KIRI', 0xD0423BB1: 'MIK_FACE_KIRI_CL',
+    0xD1EE03AD: 'MIK_FACE_KOMARIEGAO', 0xCE74137C: 'MIK_FACE_KOMARIWARAI', 0x81B7238D: 'MIK_FACE_KOMARIWARAI_CL', 0x4BD9C988: 'MIK_FACE_KONWAKU', 0xC1710C97: 'MIK_FACE_KONWAKU_CL',
+    0x0BA4A548: 'MIK_FACE_KUMON', 0x7891EAB3: 'MIK_FACE_KUMON_CL', 0x351E8FB3: 'MIK_FACE_KUTSUU', 0xCD915DF7: 'MIK_FACE_KUTSUU_CL', 0x67921A1C: 'MIK_FACE_LASCIVIOUS',
+    0xF4D467F3: 'MIK_FACE_LASCIVIOUS_CL', 0x0B423D16: 'MIK_FACE_LAUGH', 0x7FA01BDB: 'MIK_FACE_NAGASI', 0x6BBC2A4E: 'MIK_FACE_NAGASI_CL', 0x9619BB34: 'MIK_FACE_NAKI', 0x0655CE85: 'MIK_FACE_NAKI_CL',
+    0xA69F3640: 'MIK_FACE_NAYAMI', 0xBD0BC34D: 'MIK_FACE_NAYAMI_CL', 0xAADAC5FD: 'MIK_FACE_OMOU', 0x30D08CEE: 'MIK_FACE_OMOU_CL', 0x1C071A15: 'MIK_FACE_RESET', 0xD7C1DA42: 'MIK_FACE_SAD',
+    0x70C43C9D: 'MIK_FACE_SAD_CL', 0xE11659A5: 'MIK_FACE_SETTLED', 0xAE1054D5: 'MIK_FACE_SETTLED_CL', 0x9E697E02: 'MIK_FACE_SETUNA', 0x2BFFC1CB: 'MIK_FACE_SETUNA_CL', 0x0EE65D7B: 'MIK_FACE_SMILE',
+    0xC65DCBCB: 'MIK_FACE_SMILE_CL', 0x68C2A780: 'MIK_FACE_STRONG', 0x038594DF: 'MIK_FACE_STRONG_CL', 0xA1D6ECD7: 'MIK_FACE_SUPSERIOUS', 0x3667062A: 'MIK_FACE_SUPSERIOUS_CL',
+    0x6DFA429B: 'MIK_FACE_SURPRISE', 0x6EF0F796: 'MIK_FACE_SURPRISE_CL', 0x0E318E47: 'MIK_FACE_TSUYOKIWARAI', 0x942B7539: 'MIK_FACE_TSUYOKIWARAI_CL', 0x369176D6: 'MIK_FACE_UTURO',
+    0xE704376B: 'MIK_FACE_UTURO_CL', 0xD86E2250: 'MIK_FACE_WINK_L', 0x37C0C575: 'MIK_FACE_WINK_R', 0x91E4A429: 'MIK_FACE_WINKG_L', 0xAFC80288: 'MIK_FACE_WINKG_R', 0x60943A41: 'MIK_FACE_YARU',
+    0x1BC8C7F8: 'MIK_FACE_YARU_CL', 0x8D679789: 'MIK_KUCHI_A', 0x27256E52: 'MIK_KUCHI_CHU', 0x9834C866: 'MIK_KUCHI_E', 0x33838A11: 'MIK_KUCHI_E_DOWN', 0xC288A2B6: 'MIK_KUCHI_HAMISE',
+    0x2EE45D78: 'MIK_KUCHI_HAMISE_DOWN', 0xD42ACE8B: 'MIK_KUCHI_HAMISE_E', 0xBD509253: 'MIK_KUCHI_HE', 0x8C96BE4C: 'MIK_KUCHI_HE_S', 0xD1CC9C6B: 'MIK_KUCHI_HERAHERA', 0x5FED5E14: 'MIK_KUCHI_I',
+    0xAAD5F001: 'MIK_KUCHI_MOGUMOGU', 0xEDEAD6C9: 'MIK_KUCHI_NEKO', 0x8AAAB09E: 'MIK_KUCHI_NEUTRAL', 0xB9808D8F: 'MIK_KUCHI_NIYA', 0x2B9AA94D: 'MIK_KUCHI_O', 0xE472692C: 'MIK_KUCHI_PSP_A',
+    0x4A88205A: 'MIK_KUCHI_PSP_E', 0xAA2BD9D4: 'MIK_KUCHI_PSP_NIYA', 0x1444FEAA: 'MIK_KUCHI_PSP_NIYARI', 0x64030BB3: 'MIK_KUCHI_PSP_O', 0x72354540: 'MIK_KUCHI_PSP_SURPRISE',
+    0x61198CF4: 'MIK_KUCHI_RESET', 0x9218C1AC: 'MIK_KUCHI_SAKEBI', 0x57037C4B: 'MIK_KUCHI_SAKEBI_L', 0x932BBDAC: 'MIK_KUCHI_SANKAKU', 0x23EC5921: 'MIK_KUCHI_SHIKAKU', 0x349493AB: 'MIK_KUCHI_SMILE',
+    0x48A15672: 'MIK_KUCHI_SMILE_L', 0x47BB071D: 'MIK_KUCHI_SURPRISE', 0x6BF6E5B4: 'MIK_KUCHI_U'}
     return hashDict
