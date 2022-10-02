@@ -26,4 +26,4 @@ VMD module requiered https://github.com/h-kidd/noesis-vmd
 
 For F2nd/X/MGF decrypt your .bon files using https://github.com/s117/DIVAFILE_Tool or a similar tool.
 
-To speed up extracting models with muliple sub models, use multi_model.bat and follow the instructions.
+To speed up extracting models with multiple sub models, use multi_model.bat and follow the instructions.
