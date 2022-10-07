@@ -1528,10 +1528,10 @@ class Skin:
         name = getOffString(bs, readOff(bs, self.addressSpace))
         count = bs.readInt()
         exp = []
-        print(name)
+        # print(name)
         for i in range(count):
             exp.append(getOffString(bs, readOff(bs, self.addressSpace)))
-            print(exp[i])
+            # print(exp[i])
         if name not in self.boneDict:
             self.loadBone(name, parentName, pos, rot, scl)
 
