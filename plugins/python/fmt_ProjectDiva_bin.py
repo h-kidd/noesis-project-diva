@@ -335,7 +335,7 @@ def objectSetLoadModel(data, mdlList, fileName=None, fileDir=None, isMot=False):
         if test == 0:
             noesis.messagePrompt("Invalid object file.")
             return 0
-        texObj = ObjectSet([], txp2.texList, objectSetDb, texDb, texDbMdata, boneData, 32, None, texDbMdata)
+        texObj = ObjectSet([], txp2.texList, objectSetDb, texDb, boneData, 32, None, texDbMdata)
         texObj.readObjSet(NoeBitStream(texObjData), texObjData)
         for i in range(len(mdlList[0].modelMats.texList)):
             mdlList[0].modelMats.texList[i] = texObj.texList[texObj.texDict[mdlList[0].modelMats.texList[i].name]]
@@ -1528,8 +1528,10 @@ class Skin:
         name = getOffString(bs, readOff(bs, self.addressSpace))
         count = bs.readInt()
         exp = []
+        print(name)
         for i in range(count):
             exp.append(getOffString(bs, readOff(bs, self.addressSpace)))
+            print(exp[i])
         if name not in self.boneDict:
             self.loadBone(name, parentName, pos, rot, scl)
 
