@@ -587,7 +587,7 @@ def a3daLoadModel(data, mdlList):
     a3da.readA3da(data)
     rapi.setPreviewOption("setAnimSpeed", "60")
     if exportVmd:
-        vmdExport(a3da.names, a3da.frameCounts, a3da.animList, None, "diva.bone", "diva.morph")
+        vmdExport(a3da.names, a3da.frameCounts, a3da.animList, None, "diva.bone", "diva.morph", a3da.isCam)
     return 1
 
 def dscLoadScript(data, mdlList):
@@ -1047,8 +1047,6 @@ class BoneData:
             boneRot.update(boneRotExtra[char])
         self.boneList.append(NoeBone(0, 'gblctr', NoeMat43(), None, -1))
         self.boneDict['gblctr'] = 0
-        self.boneList.append(NoeBone(1, 'kg_ya_ex', NoeMat43(), None, 0))
-        self.boneDict['kg_ya_ex'] = 1
         idx = 0
         for i in range(motBoneCount):
             boneName = motBoneNames[i]
@@ -1063,8 +1061,8 @@ class BoneData:
                 mtx2 = NoeAngles([boneRot[boneName][0]*noesis.g_flRadToDeg, boneRot[boneName][1]*noesis.g_flRadToDeg, boneRot[boneName][2]*noesis.g_flRadToDeg]).toMat43_XYZ()
                 mtx2[3] = mtx[3]
                 mtx = mtx2
-            self.boneList.append(NoeBone(i+2, boneName, mtx, None, parent+2))
-            self.boneDict[boneName] = i+2
+            self.boneList.append(NoeBone(i+1, boneName, mtx, None, parent+1))
+            self.boneDict[boneName] = i+1
 
 class Bone:
     
@@ -1413,6 +1411,10 @@ class Skin:
                 if exDataOff:
                     bs.seek(exDataOff, NOESEEK_ABS)
                     self.readExData(bs)
+                for i in range(boneCount):
+                    name = self.boneName[i]
+                    if name not in self.boneDict:
+                        self.loadBone(name, None, None, None, None, boneMtxs[i], -1)
             else:
                 self.local = False
                 if boneParents:
@@ -3294,6 +3296,8 @@ class Motion:
     def readAnimMot(self, name, frameCount, animMap, boneNames, divData):
         kfBones = []
         cnt = 0
+        skip = ['n_hito_l_ex', 'n_ko_l_ex', 'n_kusu_l_ex', 'n_naka_l_ex', 'n_oya_l_ex', 'n_skata_l_wj_cd_ex', 
+        'n_hito_r_ex', 'n_ko_r_ex', 'n_kusu_r_ex', 'n_naka_r_ex', 'n_oya_r_ex', 'n_skata_r_wj_cd_ex']
         for boneName in boneNames:
             if animMap[cnt] == 0x00 and animMap[cnt+1] == 0x00 and animMap[cnt+2] == 0x00:
                 cnt += 3
@@ -3336,8 +3340,8 @@ class Motion:
             cnt += 1
             zRotKeyFrames = self.readKeyFramesMot(divData, animMap[cnt])
             cnt += 1
-            if xRotKeyFrames.keys[0] != 0.0 or yRotKeyFrames.keys[0] != 0.0 or zRotKeyFrames.keys[0] != 0.0:
-                print("'"+ boneName +"': NoeVec3(("+str(xRotKeyFrames.keys[0])+', '+str(yRotKeyFrames.keys[0])+', '+str(zRotKeyFrames.keys[0])+')), ')
+            # if xRotKeyFrames.keys[0] != 0.0 or yRotKeyFrames.keys[0] != 0.0 or zRotKeyFrames.keys[0] != 0.0:
+            #     print("'"+ boneName +"': NoeVec3(("+str(xRotKeyFrames.keys[0])+', '+str(yRotKeyFrames.keys[0])+', '+str(zRotKeyFrames.keys[0])+')), ')
             if boneName in self.boneData.type and self.boneData.type[boneName] == 0x00:
                 xSclKeyFrames = self.readKeyFramesMot(divData, animMap[cnt])
                 cnt += 1
@@ -3468,7 +3472,7 @@ class Motion:
         boneKey.setTranslation(keys, noesis.NOEKF_TRANSLATION_VECTOR_3, noesis.NOEKF_INTERPOLATE_LINEAR)
         keys = self.loadRotKeys(frameCount, xRotKeyFrames, yRotKeyFrames, zRotKeyFrames, boneName, 4)
         boneKey.setRotation(keys, noesis.NOEKF_ROTATION_QUATERNION_4, noesis.NOEKF_INTERPOLATE_LINEAR)
-        if self.boneData.type[boneName] == 0x00:
+        if boneName in self.boneData.type and self.boneData.type[boneName] == 0x00:
             keys = self.loadKeys(frameCount, xSclKeyFrames, ySclKeyFrames, zSclKeyFrames, 4)
             boneKey.setScale(keys, noesis.NOEKF_SCALE_VECTOR_3, noesis.NOEKF_INTERPOLATE_LINEAR)
         return boneKey
@@ -4113,6 +4117,7 @@ class A3da:
         self.animList = []
         self.names = []
         self.frameCounts = []
+        self.isCam = False
 
     def readA3da(self, data):
         bs = NoeBitStream(data)
@@ -4189,7 +4194,11 @@ class A3da:
         fps = a3daDict['play_control']['fps']
         size = a3daDict['play_control']['size']
 
-        if 'objhrc' in a3daDict:
+        if 'camera_root' in a3daDict:
+            self.isCam = True
+            name = a3daDict['_']['file_name'].split('.')[0]
+            self.readCamera(a3daDict['camera_root']['0'], bs, size, compress, name)
+        elif 'objhrc' in a3daDict:
             objMdlList = []
             modelPath = noesis.userPrompt(noesis.NOEUSERVAL_FILEPATH, "Open Model File", "Select a model file to open.", noesis.getSelectedFile(), None)
             if isinstance(modelPath, str):
@@ -4212,6 +4221,20 @@ class A3da:
                 return 0
             self.readObjhrc(a3daDict['objhrc'], bs, objMdlList, obj, size, compress)
 
+    def readCamera(self, a3daDict, bs, size, compress, name):
+        kfBones = []
+        boneList = [NoeBone(0, 'Camera', NoeMat43(), None, -1), NoeBone(1, 'Camera_Fov', NoeMat43(), None, -1), NoeBone(2, 'Camera_Interest', NoeMat43(), None, -1)]
+        mdl = NoeModel()
+        mdl.setBones(boneList)
+        kfBones.extend(self.readViewPoint(a3daDict['view_point'], bs, size, compress))
+        kfBones.extend(self.readInterest(a3daDict['interest'], bs, size, compress))
+        anim = NoeKeyFramedAnim(name, boneList, kfBones, 1.0)
+        mdl.setAnims([anim])
+        self.mdlList.append(mdl)
+        self.animList.append(anim)
+        self.frameCounts.append(size)
+        self.names.append(name)
+
     def readObjhrc(self, a3daDict, bs, objMdlList, obj, size, compress):
         for i in range(a3daDict['length']):
             uidName = a3daDict[str(i)]['uid_name']
@@ -4225,6 +4248,57 @@ class A3da:
             self.animList.append(anim)
             self.frameCounts.append(size)
             self.names.append(name)
+
+    def readViewPoint(self, a3daDict, bs, size, compress):
+        kfBones = []
+        if 'fov' in a3daDict:
+            aspect = a3daDict['aspect']
+            isHorizontal = a3daDict['fov_is_horizontal']
+            if 'model_transform' in a3daDict:
+                binOff = a3daDict['model_transform']['bin_offset']
+                self.readModelTransform(a3daDict, bs, compress, binOff)
+                binOff = a3daDict['roll']['bin_offset']
+                self.readSingle(a3daDict, bs, compress, binOff, 'roll')
+                binOff = a3daDict['fov']['bin_offset']
+                self.readSingle(a3daDict, bs, compress, binOff, 'fov')
+            fovKeyFrames = self.readKeyData(a3daDict['fov'])
+            fovKeys = self.loadFovKeys(size, fovKeyFrames, aspect, isHorizontal)
+        else:
+            camWidth = a3daDict['camera_aperture_w']
+            camHeight = a3daDict['camera_aperture_h']
+            if 'model_transform' in a3daDict:
+                binOff = a3daDict['model_transform']['bin_offset']
+                self.readModelTransform(a3daDict, bs, compress, binOff)
+                binOff = a3daDict['roll']['bin_offset']
+                self.readSingle(a3daDict, bs, compress, binOff, 'roll')
+                binOff = a3daDict['focal_length']['bin_offset']
+                self.readSingle(a3daDict, bs, compress, binOff, 'focal_length')
+            focalLengthKeyFrames = self.readKeyData(a3daDict['focal_length'])
+            fovKeys = self.loadFocalLengthKeys(size, focalLengthKeyFrames, camWidth, camHeight)
+        xTranKeyFrames, yTranKeyFrames, zTranKeyFrames = self.readKeysXYZ(a3daDict['trans'])
+        tranKeys = self.loadKeysXYZ(size, xTranKeyFrames, yTranKeyFrames, zTranKeyFrames)
+        rollKeyFrames = self.readKeyData(a3daDict['roll'])
+        rollKeys = self.loadRollKeys(size, rollKeyFrames)
+        boneKey = NoeKeyFramedBone(0)
+        boneKey.setTranslation(tranKeys, noesis.NOEKF_TRANSLATION_VECTOR_3, noesis.NOEKF_INTERPOLATE_LINEAR)
+        boneKey.setRotation(rollKeys, noesis.NOEKF_ROTATION_QUATERNION_4, noesis.NOEKF_INTERPOLATE_LINEAR)
+        kfBones.append(boneKey)
+        boneKey = NoeKeyFramedBone(1)
+        boneKey.setTranslation(fovKeys, noesis.NOEKF_TRANSLATION_VECTOR_3, noesis.NOEKF_INTERPOLATE_LINEAR)
+        kfBones.append(boneKey)
+        return kfBones
+
+    def readInterest(self, a3daDict, bs, size, compress):
+        kfBones = []
+        if 'model_transform' in a3daDict:
+            binOff = a3daDict['model_transform']['bin_offset']
+            self.readModelTransform(a3daDict, bs, compress, binOff)
+        xTranKeyFrames, yTranKeyFrames, zTranKeyFrames = self.readKeysXYZ(a3daDict['trans'])
+        tranKeys = self.loadKeysXYZ(size, xTranKeyFrames, yTranKeyFrames, zTranKeyFrames)
+        boneKey = NoeKeyFramedBone(2)
+        boneKey.setTranslation(tranKeys, noesis.NOEKF_TRANSLATION_VECTOR_3, noesis.NOEKF_INTERPOLATE_LINEAR)
+        kfBones.append(boneKey)
+        return kfBones
 
     def readNode(self, a3daDict, bs, name, size, compress, boneList, boneDict):
         kfBones = []
@@ -4317,6 +4391,9 @@ class A3da:
         a3daDict['trans']['z'] = self.readBinKey(bs, compress, offsets[8])
         a3daDict['visibility'] = self.readBinKey(bs, compress, offsets[9])
 
+    def readSingle(self, a3daDict, bs, compress, binOff, singleType):
+        a3daDict[singleType] = self.readBinKey(bs, compress, binOff)
+
     def readBinKey(self, bs, compress, off, isRot=False):
         mtDict = {}
         if off == 0xFFFFFFFF:
@@ -4364,7 +4441,7 @@ class A3da:
             else:
                 for i in range(keyLength):
                     mtDict['key'][str(i)] = {'type': 3}
-                    frame = int(bs.readFloat())
+                    frame = round(bs.readFloat())
                     value = bs.readFloat()
                     tan1 = bs.readFloat()
                     tan2 = bs.readFloat()
@@ -4460,6 +4537,39 @@ class A3da:
             keys = cleanupKeys(frameCount, key, [0.0]*frameCount, [0.0]*frameCount)
         return keys
 
+    def loadRollKeys(self, frameCount, keyFrames):
+        keys = []
+        if keyFrames.keyType <= 0x01:
+            keys.append(NoeKeyFramedValue(0, NoeAngles([0.0, 0.0, keyFrames.keys[0]*noesis.g_flRadToDeg]).toMat43_XYZ().toQuat()))
+        else:
+            key = interpolate(frameCount, keyFrames, keyFrames.interpType)
+            keys = cleanupRotKeys(frameCount, [0.0]*frameCount, [0.0]*frameCount, key)
+        return keys
+
+    def loadFovKeys(self, frameCount, keyFrames, aspect, isHorizontal):
+        keys = []
+        if keyFrames.keyType <= 0x01:
+            if isHorizontal and h2v:
+                keys.append(NoeKeyFramedValue(0, NoeVec3([(2*math.atan(math.tan(keyFrames.keys[0]/2)*(1/aspect)))*noesis.g_flRadToDeg, 0.0, 0.0])))
+            else:
+                keys.append(NoeKeyFramedValue(0, NoeVec3([keyFrames.keys[0]*noesis.g_flRadToDeg, 0.0, 0.0])))
+        else:
+            key = interpolate(frameCount, keyFrames, keyFrames.interpType)
+            keys = cleanupFovKeys(frameCount, key, aspect, isHorizontal)
+        return keys
+
+    def loadFocalLengthKeys(self, frameCount, keyFrames, camWidth, camHeight):
+        keys = []
+        if keyFrames.keyType <= 0x01:
+            if h2v:
+                keys.append(NoeKeyFramedValue(0, NoeVec3([(2*math.atan((0.5*(camHeight*25.4))/keyFrames.keys[0]))*noesis.g_flRadToDeg, 0.0, 0.0])))
+            else:
+                keys.append(NoeKeyFramedValue(0, NoeVec3([(2*math.atan((0.5*(camWidth*25.4))/keyFrames.keys[0]))*noesis.g_flRadToDeg, 0.0, 0.0])))
+        else:
+            key = interpolate(frameCount, keyFrames, keyFrames.interpType)
+            keys = cleanupFocalLengthKeys(frameCount, key, camWidth, camHeight)
+        return keys
+
     def loadKeysXYZ(self, frameCount, xKeyFrames, yKeyFrames, zKeyFrames):
         keys = []
         if xKeyFrames.keyType <= 0x01 and yKeyFrames.keyType <= 0x01 and zKeyFrames.keyType <= 0x01:
@@ -4482,14 +4592,17 @@ class A3da:
             keys = cleanupRotKeys(frameCount, xKey, yKey, zKey)
         return keys
 
-def vmdExport(nameList, frameCountList, animList, morphList, boneDictName, morphDictName):
+def vmdExport(nameList, frameCountList, animList, morphList, boneDictName, morphDictName, isCam = False):
     outDir = noesis.userPrompt(noesis.NOEUSERVAL_FOLDERPATH, "Choose a output directory.", "Choose a directory to output your vmd files.", rapi.getDirForFilePath(rapi.getLastCheckedName()), isFolder)
     if outDir == None:
         print("Write vmd failed.")
         return 0
     if not outDir.endswith("\\"):
         outDir += "\\"
-    if morphList and animList:
+    if isCam:
+        vmd = Vmd(nameList[0], frameCountList[0], animList[0], [], boneDictName, morphDictName, pmxScale, ["Camera_Fov"])
+        vmd.wrtieCamVmd(outDir, 'Camera', 'Camera_Fov', 'Camera_Interest')
+    elif morphList and animList:
         for i in range(len(animList)):
             vmd = Vmd(nameList[i], frameCountList[i], animList[i], morphList[i], boneDictName, morphDictName, pmxScale, ["Camera_Fov"])
             vmd.wrtieVmd(outDir)
@@ -4891,7 +5004,7 @@ def interpLinear(frame, initFrame, endFrame, initKey, endKey):
 
 def cleanupKeys(frameCount, xKey, yKey, zKey):
     keys = []
-    keys.append(NoeKeyFramedValue(0, [xKey[0], yKey[0], zKey[0]]))
+    keys.append(NoeKeyFramedValue(0, NoeVec3((xKey[0], yKey[0], zKey[0]))))
     for i in range(1, frameCount - 1):
         if [xKey[i], yKey[i], zKey[i]] == [xKey[i-1], yKey[i-1], zKey[i-1]] and [xKey[i], yKey[i], zKey[i]] == [xKey[i+1], yKey[i+1], zKey[i+1]]:
             continue
@@ -4909,6 +5022,46 @@ def cleanupRotKeys(frameCount, xKey, yKey, zKey):
         else:
             keys.append(NoeKeyFramedValue(i, NoeAngles([xKey[i]*noesis.g_flRadToDeg, yKey[i]*noesis.g_flRadToDeg, zKey[i]*noesis.g_flRadToDeg]).toMat43_XYZ().toQuat()))
     keys.append(NoeKeyFramedValue(frameCount - 1, NoeAngles([xKey[-1]*noesis.g_flRadToDeg, yKey[-1]*noesis.g_flRadToDeg, zKey[-1]*noesis.g_flRadToDeg]).toMat43_XYZ().toQuat()))
+    return keys
+
+def cleanupFovKeys(frameCount, key, aspect, isHorizontal):
+    keys = []
+    if isHorizontal and h2v:
+        keys.append(NoeKeyFramedValue(0, NoeVec3([(2*math.atan(math.tan(key[0]/2)*(1/aspect)))*noesis.g_flRadToDeg, 0.0, 0.0])))
+    else:
+        keys.append(NoeKeyFramedValue(0, NoeVec3([key[0]*noesis.g_flRadToDeg, 0.0, 0.0])))
+    for i in range(1, frameCount - 1):
+        if key[i] == key[i-1] and key[i] == key[i+1]:
+            continue
+        else:
+            if isHorizontal and h2v:
+                keys.append(NoeKeyFramedValue(i, NoeVec3([(2*math.atan(math.tan(key[i]/2)*(1/aspect)))*noesis.g_flRadToDeg, 0.0, 0.0])))
+            else:
+                keys.append(NoeKeyFramedValue(i, NoeVec3([key[i]*noesis.g_flRadToDeg, 0.0, 0.0])))
+    if isHorizontal and h2v:
+        keys.append(NoeKeyFramedValue(frameCount - 1, NoeVec3([(2*math.atan(math.tan(key[-1]/2)*(1/aspect)))*noesis.g_flRadToDeg, 0.0, 0.0])))
+    else:
+        keys.append(NoeKeyFramedValue(frameCount - 1, NoeVec3([key[-1]*noesis.g_flRadToDeg, 0.0, 0.0])))
+    return keys
+
+def cleanupFocalLengthKeys(frameCount, key, camWidth, camHeight):
+    keys = []
+    if h2v:
+        keys.append(NoeKeyFramedValue(0, NoeVec3([(2*math.atan((0.5*(camHeight*25.4))/key[0]))*noesis.g_flRadToDeg, 0.0, 0.0])))
+    else:
+        keys.append(NoeKeyFramedValue(0, NoeVec3([(2*math.atan((0.5*(camWidth*25.4))/key[0]))*noesis.g_flRadToDeg, 0.0, 0.0])))
+    for i in range(1, frameCount - 1):
+        if key[i] == key[i-1] and key[i] == key[i+1]:
+            continue
+        else:
+            if h2v:
+                keys.append(NoeKeyFramedValue(i, NoeVec3([(2*math.atan((0.5*(camHeight*25.4))/key[i]))*noesis.g_flRadToDeg, 0.0, 0.0])))
+            else:
+                keys.append(NoeKeyFramedValue(i, NoeVec3([(2*math.atan((0.5*(camWidth*25.4))/key[i]))*noesis.g_flRadToDeg, 0.0, 0.0])))
+    if h2v:
+        keys.append(NoeKeyFramedValue(frameCount - 1, NoeVec3([(2*math.atan((0.5*(camHeight*25.4))/key[-1]))*noesis.g_flRadToDeg, 0.0, 0.0])))
+    else:
+        keys.append(NoeKeyFramedValue(frameCount - 1, NoeVec3([(2*math.atan((0.5*(camWidth*25.4))/key[-1]))*noesis.g_flRadToDeg, 0.0, 0.0])))
     return keys
 
 def nested_update(d, v):

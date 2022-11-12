@@ -14,6 +14,7 @@ Animations:
 - Miracle Girls Festival
 
 Project Diva Auth 3D:
+- Camera
 - Objhrc (beta)
 
 To enable vmd export set `exportVmd` to `True` on line 11
