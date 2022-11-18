@@ -11,7 +11,7 @@ import copy
 from collections import MutableMapping as Map
 
 #Write vmd file (required for a3da)
-exportVmd = True
+exportVmd = False
 pmxScale = 12.5
 
 #Options
@@ -5063,9 +5063,7 @@ def cleanupFovKeys(frameCount, key, aspect, isHorizontal):
     count = frameCount
     if make30:
         count = frameCount // 2
-        xKey = xKey[::2]
-        yKey = yKey[::2]
-        zKey = zKey[::2]
+        key = key[::2]
     if isHorizontal and h2v:
         keys.append(NoeKeyFramedValue(0, NoeVec3([(2*math.atan(math.tan(key[0]/2)*(1/aspect)))*noesis.g_flRadToDeg, 0.0, 0.0])))
     else:
@@ -5089,9 +5087,7 @@ def cleanupFocalLengthKeys(frameCount, key, camWidth, camHeight):
     count = frameCount
     if make30:
         count = frameCount // 2
-        xKey = xKey[::2]
-        yKey = yKey[::2]
-        zKey = zKey[::2]
+        key = key[::2]
     if h2v:
         keys.append(NoeKeyFramedValue(0, NoeVec3([(2*math.atan((0.5*(camHeight*25.4))/key[0]))*noesis.g_flRadToDeg, 0.0, 0.0])))
     else:
