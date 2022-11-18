@@ -11,10 +11,11 @@ import copy
 from collections import MutableMapping as Map
 
 #Write vmd file (required for a3da)
-exportVmd = False
+exportVmd = True
 pmxScale = 12.5
 
 #Options
+make30 = False #Convert the 60fps animation to 30fps
 vc2 = False #Use vertex colour 2 instead of 1 (bin format only)
 h2v = True #Convert horizontal FOV to vertical
 printMatInfo = False #Print extra material info
@@ -545,7 +546,10 @@ def motBinLoadModel(data, mdlList):
     mot = Motion(motDb, obj.boneData, obj.boneList[0], obj.boneDict[0])
     mot.readMotion(NoeBitStream(data), fileName)
     mdlList[0].setAnims(mot.animList)
-    rapi.setPreviewOption("setAnimSpeed", "60")
+    if make30:
+        rapi.setPreviewOption("setAnimSpeed", "30")
+    else:
+        rapi.setPreviewOption("setAnimSpeed", "60")
     if exportVmd:
         vmdExport(mot.names, mot.frameCounts, mot.animList, None, "diva.bone", "diva.morph")
     return 1
@@ -576,7 +580,10 @@ def motLoadModel(data, mdlList):
     mot = Motc()
     mot.readMotc(data, obj.boneData, obj.boneList[0], obj.boneDict[0], fileName, fileDir)
     mdlList[0].setAnims(mot.animList)
-    rapi.setPreviewOption("setAnimSpeed", "60")
+    if make30:
+        rapi.setPreviewOption("setAnimSpeed", "30")
+    else:
+        rapi.setPreviewOption("setAnimSpeed", "60")
     if exportVmd:
         vmdExport(mot.names, mot.frameCounts, mot.animList, None, "diva.bone", "diva.morph")
     return 1
@@ -585,7 +592,10 @@ def a3daLoadModel(data, mdlList):
     ctx = rapi.rpgCreateContext()
     a3da = A3da(mdlList)
     a3da.readA3da(data)
-    rapi.setPreviewOption("setAnimSpeed", "60")
+    if make30:
+        rapi.setPreviewOption("setAnimSpeed", "30")
+    else:
+        rapi.setPreviewOption("setAnimSpeed", "60")
     if exportVmd:
         vmdExport(a3da.names, a3da.frameCounts, a3da.animList, None, "diva.bone", "diva.morph", a3da.isCam)
     return 1
@@ -3197,7 +3207,10 @@ class Motion:
             bs.seek(infoOff, NOESEEK_ABS)
             mapSize, frameCount = self.readInfo(bs)
             self.names.append(name)
-            self.frameCounts.append(frameCount)
+            if make30:
+                self.frameCounts.append(frameCount // 2)
+            else:
+                self.frameCounts.append(frameCount)
             bs.seek(mapOff, NOESEEK_ABS)
             animMap = self.readMap(bs, mapSize)
             bs.seek(boneNamesOff, NOESEEK_ABS)
@@ -3220,7 +3233,10 @@ class Motion:
         bs.seek(infoOff, NOESEEK_ABS)
         mapSize, frameCount = self.readInfo(bs)
         self.names.append(name)
-        self.frameCounts.append(frameCount)
+        if make30:
+            self.frameCounts.append(frameCount // 2)
+        else:
+            self.frameCounts.append(frameCount)
         bs.seek(mapOff, NOESEEK_ABS)
         animMap = self.readMap(bs, mapSize)
         boneNames = getOffStringList(bs, self.addressSpace, boneNamesOff, boneCount)
@@ -4232,7 +4248,10 @@ class A3da:
         mdl.setAnims([anim])
         self.mdlList.append(mdl)
         self.animList.append(anim)
-        self.frameCounts.append(size)
+        if make30:
+            self.frameCounts.append(size // 2)
+        else:
+            self.frameCounts.append(size)
         self.names.append(name)
 
     def readObjhrc(self, a3daDict, bs, objMdlList, obj, size, compress):
@@ -4246,7 +4265,10 @@ class A3da:
             mdl.setAnims([anim])
             self.mdlList.append(mdl)
             self.animList.append(anim)
-            self.frameCounts.append(size)
+            if make30:
+                self.frameCounts.append(size // 2)
+            else:
+                self.frameCounts.append(size)
             self.names.append(name)
 
     def readViewPoint(self, a3daDict, bs, size, compress):
@@ -5004,33 +5026,51 @@ def interpLinear(frame, initFrame, endFrame, initKey, endKey):
 
 def cleanupKeys(frameCount, xKey, yKey, zKey):
     keys = []
+    count = frameCount
+    if make30:
+        count = frameCount // 2
+        xKey = xKey[::2]
+        yKey = yKey[::2]
+        zKey = zKey[::2]
     keys.append(NoeKeyFramedValue(0, NoeVec3((xKey[0], yKey[0], zKey[0]))))
-    for i in range(1, frameCount - 1):
+    for i in range(1, count - 1):
         if [xKey[i], yKey[i], zKey[i]] == [xKey[i-1], yKey[i-1], zKey[i-1]] and [xKey[i], yKey[i], zKey[i]] == [xKey[i+1], yKey[i+1], zKey[i+1]]:
             continue
         else:
             keys.append(NoeKeyFramedValue(i, NoeVec3((xKey[i], yKey[i], zKey[i]))))
-    keys.append(NoeKeyFramedValue(frameCount - 1, NoeVec3((xKey[frameCount - 1], yKey[frameCount - 1], zKey[frameCount - 1]))))
+    keys.append(NoeKeyFramedValue(count - 1, NoeVec3((xKey[-1], yKey[-1], zKey[-1]))))
     return keys
 
 def cleanupRotKeys(frameCount, xKey, yKey, zKey):
     keys = []
+    count = frameCount
+    if make30:
+        count = frameCount // 2
+        xKey = xKey[::2]
+        yKey = yKey[::2]
+        zKey = zKey[::2]
     keys.append(NoeKeyFramedValue(0, NoeAngles([xKey[0]*noesis.g_flRadToDeg, yKey[0]*noesis.g_flRadToDeg, zKey[0]*noesis.g_flRadToDeg]).toMat43_XYZ().toQuat()))
-    for i in range(1, frameCount - 1):
+    for i in range(1, count - 1):
         if [xKey[i], yKey[i], zKey[i]] == [xKey[i-1], yKey[i-1], zKey[i-1]] and [xKey[i], yKey[i], zKey[i]] == [xKey[i+1], yKey[i+1], zKey[i+1]]:
             continue
         else:
             keys.append(NoeKeyFramedValue(i, NoeAngles([xKey[i]*noesis.g_flRadToDeg, yKey[i]*noesis.g_flRadToDeg, zKey[i]*noesis.g_flRadToDeg]).toMat43_XYZ().toQuat()))
-    keys.append(NoeKeyFramedValue(frameCount - 1, NoeAngles([xKey[-1]*noesis.g_flRadToDeg, yKey[-1]*noesis.g_flRadToDeg, zKey[-1]*noesis.g_flRadToDeg]).toMat43_XYZ().toQuat()))
+    keys.append(NoeKeyFramedValue(count - 1, NoeAngles([xKey[-1]*noesis.g_flRadToDeg, yKey[-1]*noesis.g_flRadToDeg, zKey[-1]*noesis.g_flRadToDeg]).toMat43_XYZ().toQuat()))
     return keys
 
 def cleanupFovKeys(frameCount, key, aspect, isHorizontal):
     keys = []
+    count = frameCount
+    if make30:
+        count = frameCount // 2
+        xKey = xKey[::2]
+        yKey = yKey[::2]
+        zKey = zKey[::2]
     if isHorizontal and h2v:
         keys.append(NoeKeyFramedValue(0, NoeVec3([(2*math.atan(math.tan(key[0]/2)*(1/aspect)))*noesis.g_flRadToDeg, 0.0, 0.0])))
     else:
         keys.append(NoeKeyFramedValue(0, NoeVec3([key[0]*noesis.g_flRadToDeg, 0.0, 0.0])))
-    for i in range(1, frameCount - 1):
+    for i in range(1, count - 1):
         if key[i] == key[i-1] and key[i] == key[i+1]:
             continue
         else:
@@ -5039,18 +5079,24 @@ def cleanupFovKeys(frameCount, key, aspect, isHorizontal):
             else:
                 keys.append(NoeKeyFramedValue(i, NoeVec3([key[i]*noesis.g_flRadToDeg, 0.0, 0.0])))
     if isHorizontal and h2v:
-        keys.append(NoeKeyFramedValue(frameCount - 1, NoeVec3([(2*math.atan(math.tan(key[-1]/2)*(1/aspect)))*noesis.g_flRadToDeg, 0.0, 0.0])))
+        keys.append(NoeKeyFramedValue(count - 1, NoeVec3([(2*math.atan(math.tan(key[-1]/2)*(1/aspect)))*noesis.g_flRadToDeg, 0.0, 0.0])))
     else:
-        keys.append(NoeKeyFramedValue(frameCount - 1, NoeVec3([key[-1]*noesis.g_flRadToDeg, 0.0, 0.0])))
+        keys.append(NoeKeyFramedValue(count - 1, NoeVec3([key[-1]*noesis.g_flRadToDeg, 0.0, 0.0])))
     return keys
 
 def cleanupFocalLengthKeys(frameCount, key, camWidth, camHeight):
     keys = []
+    count = frameCount
+    if make30:
+        count = frameCount // 2
+        xKey = xKey[::2]
+        yKey = yKey[::2]
+        zKey = zKey[::2]
     if h2v:
         keys.append(NoeKeyFramedValue(0, NoeVec3([(2*math.atan((0.5*(camHeight*25.4))/key[0]))*noesis.g_flRadToDeg, 0.0, 0.0])))
     else:
         keys.append(NoeKeyFramedValue(0, NoeVec3([(2*math.atan((0.5*(camWidth*25.4))/key[0]))*noesis.g_flRadToDeg, 0.0, 0.0])))
-    for i in range(1, frameCount - 1):
+    for i in range(1, count - 1):
         if key[i] == key[i-1] and key[i] == key[i+1]:
             continue
         else:
@@ -5059,9 +5105,9 @@ def cleanupFocalLengthKeys(frameCount, key, camWidth, camHeight):
             else:
                 keys.append(NoeKeyFramedValue(i, NoeVec3([(2*math.atan((0.5*(camWidth*25.4))/key[i]))*noesis.g_flRadToDeg, 0.0, 0.0])))
     if h2v:
-        keys.append(NoeKeyFramedValue(frameCount - 1, NoeVec3([(2*math.atan((0.5*(camHeight*25.4))/key[-1]))*noesis.g_flRadToDeg, 0.0, 0.0])))
+        keys.append(NoeKeyFramedValue(count - 1, NoeVec3([(2*math.atan((0.5*(camHeight*25.4))/key[-1]))*noesis.g_flRadToDeg, 0.0, 0.0])))
     else:
-        keys.append(NoeKeyFramedValue(frameCount - 1, NoeVec3([(2*math.atan((0.5*(camWidth*25.4))/key[-1]))*noesis.g_flRadToDeg, 0.0, 0.0])))
+        keys.append(NoeKeyFramedValue(count - 1, NoeVec3([(2*math.atan((0.5*(camWidth*25.4))/key[-1]))*noesis.g_flRadToDeg, 0.0, 0.0])))
     return keys
 
 def nested_update(d, v):
