@@ -70,6 +70,10 @@ def registerNoesisTypes():
     noesis.setHandlerTypeCheck(handle, emcsCheckType)
     noesis.setHandlerLoadRGBA(handle, emcsLoadRGBA)
 
+    handle = noesis.register("Project Diva Effect Texture", ".drs")
+    noesis.setHandlerTypeCheck(handle, dvrsCheckType)
+    noesis.setHandlerLoadRGBA(handle, dvrsLoadRGBA)
+
     handle = noesis.register("Project Diva Motion", ".bin")
     noesis.setHandlerTypeCheck(handle, motBinCheckType)
     noesis.setHandlerLoadModel(handle, motBinLoadModel)
@@ -236,6 +240,15 @@ def emcsCheckType(data):
         return 0
     magic = bs.readBytes(4).decode("ASCII")
     if magic != "EMCS":
+        return 0
+    return 1
+
+def dvrsCheckType(data):
+    bs = NoeBitStream(data)
+    if len(data) < 4:
+        return 0
+    magic = bs.readBytes(4).decode("ASCII")
+    if magic != "DVRS":
         return 0
     return 1
 
@@ -509,6 +522,13 @@ def emcsLoadRGBA(data, texList):
     fileName = rapi.getExtensionlessName(rapi.getLocalFileName(rapi.getLastCheckedName()))
     emcs = Emcs(fileName, texList)
     emcs.readEmcs(NoeBitStream(data))
+    return 1
+
+def dvrsLoadRGBA(data, texList):
+    ctx = rapi.rpgCreateContext()
+    fileName = rapi.getExtensionlessName(rapi.getLocalFileName(rapi.getLastCheckedName()))
+    drs = Dvrs(fileName, texList)
+    drs.readDvrs(NoeBitStream(data))
     return 1
 
 def motBinLoadModel(data, mdlList):
@@ -2857,6 +2877,8 @@ class Txp:
             texData = rapi.imageDecodeRaw(texData, width, height, "r4g4b4")
         elif texFormat == 6:
             texData = rapi.imageDecodeDXT(texData, width, height, noesis.FOURCC_DXT1)
+        elif texFormat == 7:
+            texData = rapi.imageDecodeDXT(texData, width, height, noesis.FOURCC_DXT1)
         elif texFormat == 8:
             texData = rapi.imageDecodeDXT(texData, width, height, noesis.FOURCC_DXT3)
         elif texFormat == 9:
@@ -3183,6 +3205,34 @@ class Emcs:
         for i in range(texCount):
             txp = Txp(self.texList, None, True)
             txp.readTxp(NoeBitStream(data[txpOff + txpInfo[i]:]), self.fileName)
+
+class Dvrs:
+    
+    def __init__(self, fileName, texList):
+        self.fileName = fileName
+        self.texList = texList
+        
+    def readDvrs(self, bs):
+        magic = bs.readBytes(4).decode("ASCII")
+        fileSize = bs.readUInt()
+        txpcOff = bs.readUInt()
+        endian = bs.readUInt()
+        unk = bs.readUInt()
+        bs.seek(txpcOff, NOESEEK_ABS)
+        data = bs.readBytes(fileSize - txpcOff)
+        self.readTxpc(NoeBitStream(data))
+
+    def readTxpc(self, bs):
+        magic = bs.readBytes(4).decode("ASCII")
+        fileSize = bs.readUInt()
+        txpOff = bs.readUInt()
+        endian = bs.readUInt()
+        unk = bs.readUInt()
+        txpSize = bs.readUInt()
+        bs.seek(txpOff, NOESEEK_ABS)
+        data = bs.readBytes(txpSize)
+        txp = Txp(self.texList, None, False)
+        txp.readTxp(NoeBitStream(data), self.fileName)
 
 class Motion:
     
