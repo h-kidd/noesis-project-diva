@@ -2417,13 +2417,13 @@ class ObjectSetFgo:
     def readObjSet(self, bs, data, mdlList, texList):
         magic = bs.readUInt()
         objCount = bs.readInt()
-        boneCount = bs.readInt()
+        objOff = bs.readUInt()
         self.objNames = getOffStringList(bs, 64, readOff(bs, 64), objCount)
         bs.seek(0x2C, NOESEEK_ABS)
         for i in range(objCount):
             print(self.objNames[i])
             objectOff = bs.readUInt64()
-            obj = ObjectFgo()
+            obj = ObjectFgo(texList)
             obj.readObject(NoeBitStream(data[objectOff:]))
             try:
                 mdl = rapi.rpgConstructModel()
@@ -2446,7 +2446,8 @@ class ObjectSetFgo:
 
 class ObjectFgo:
     
-    def __init__(self):
+    def __init__(self, texList):
+        self.texList = texList
         self.matList = []
         self.boneList = []
         self.morphList = []
@@ -2467,7 +2468,9 @@ class ObjectFgo:
         bs.seek(0x18, NOESEEK_REL)
         matCount = bs.readInt64()
         matOff = bs.readUInt64()
-        bs.seek(0x20, NOESEEK_REL)
+        matTexCount = bs.readInt64()
+        matTexOff = bs.readUInt64()
+        bs.seek(0x10, NOESEEK_REL)
         seklOff = bs.readUInt64()
         bs.seek(0x08, NOESEEK_REL)
         texOff = bs.readUInt64()
@@ -2484,12 +2487,14 @@ class ObjectFgo:
         bs.seek(subMeshOff, NOESEEK_ABS)
         subMeshes = self.readSubMesh(bs, subMeshCount)
         self.readBoneMap(bs, boneMapOff, subMeshes)
+        bs.seek(matTexOff, NOESEEK_ABS)
+        matTexs = self.readMatTex(bs, matTexCount)
         bs.seek(matOff, NOESEEK_ABS)
-        self.readMat(bs, matCount)
+        self.readMat(bs, matCount, matTexs)
         bs.seek(seklOff, NOESEEK_ABS)
         self.readSkel(bs)
-        bs.seek(texOff, NOESEEK_ABS)
-        self.readTex(bs)
+        # bs.seek(texOff, NOESEEK_ABS)
+        # self.readTex(bs)
         bs.seek(morphOff, NOESEEK_ABS)
         self.readMorph(bs, morphCount)
         self.buildMesh(bs, vertOff, faceOff, meshes, subMeshes)
@@ -2542,13 +2547,39 @@ class ObjectFgo:
                 boneMap.append(bs.readShort())
             self.boneMapList.append(boneMap)
 
-    def readMat(self, bs, matCount):
+    def readMat(self, bs, matCount, matTexs):
+        unkTex = {}
         for i in range(matCount):
             matName = self.stringList[bs.readUInt()]
             bs.seek(0x04, NOESEEK_REL)
+            matTexIdx = bs.readUInt()
+            bs.seek(0x0C, NOESEEK_REL)
+            matTexCount = bs.readInt()
             material = NoeMaterial(matName, "")
-            bs.seek(0xB0, NOESEEK_REL)
+            for i in range(matTexIdx, matTexIdx+matTexCount):
+                matTex = matTexs[i]
+                if matTex[1] == 0x00:
+                    material.setTexture(matTex[0])
+                elif matTex[1] == 0x04:
+                    material.setSpecularTexture(matTex[0])
+                elif matTex[1] == 0x08:
+                    material.setNormalTexture(matTex[0])
+                elif matTex[1] == 0x0E:
+                    material.setOcclTexture(matTex[0])
+                elif matTex[1] == 0x12:
+                    material.setEnvTexture(matTex[0])
+                else:
+                    if matName in unkTex:
+                        unkTex[matName].append([str(matTex[1]), matTex[0]])
+                    else:
+                        unkTex[matName] = [[str(matTex[1]), matTex[0]]]
+            bs.seek(0x9C, NOESEEK_REL)
             self.matList.append(material)
+        for key in unkTex:
+            print(key)
+            for value in unkTex[key]:
+                print("Type: " + str(value[0]) + ", Tex: " + value[1])
+            print()
 
     def readSkel(self, bs):
         boneCount = bs.readUInt()
@@ -2614,6 +2645,15 @@ class ObjectFgo:
                 print("Type: " + str(value[0]) + " Tex: " + value[1])
             print()
 
+    def readMatTex(self, bs, matTexCount):
+        matTexs = []
+        for i in range(matTexCount):
+            texIdx = bs.readUInt()
+            texType = bs.readUInt()
+            bs.seek(0x30, NOESEEK_REL)
+            matTexs.append([self.texList[texIdx].name, texType])
+        return matTexs
+
     def readMorph(self, bs, morphCount):
         for i in range(morphCount):
             self.morphList.append(self.stringList[bs.readUInt()])
@@ -2635,79 +2675,80 @@ class ObjectFgo:
                     morphCnt += 1
                 print()
             for i in range(mesh.subMeshCount):
-                subMesh = subMeshes[mesh.subMeshIdx + i]
-                if mesh.subMeshCount > 1:
-                    rapi.rpgSetName(mesh.name + "_" + str(cnt))
-                    cnt += 1
-                else:
-                    rapi.rpgSetName(mesh.name)
-                rapi.rpgSetMaterial(self.matList[subMesh.matIdx].name)
-                rapi.rpgSetUVScaleBias(NoeVec3([subMesh.uvScaleU, subMesh.uvScaleV * -1, 1]), NoeVec3([subMesh.uvPosU, 1 - subMesh.uvPosV, 0]))
-                if subMesh.boneMapCount != 0:
-                    rapi.rpgSetBoneMap(self.boneMapList[mesh.subMeshIdx + i])
-                bs.seek(vertOff + subMesh.vertOff, NOESEEK_ABS)
-                vertBuff = bs.readBytes(subMesh.vertCount * mesh.stride)
-                off = 0
-                if mesh.vertFlags & 0x01:
-                    rapi.rpgBindPositionBufferOfs(vertBuff, noesis.RPGEODATA_FLOAT, mesh.stride, off)
-                    off += 0x0C
-                if mesh.vertFlags & 0x02:
-                    nmlData = noesis.deinterleaveBytes(vertBuff, off, 0x04, mesh.stride)
-                    decodedNormals = rapi.decodeNormals32(nmlData, 4, -10, -10, -10, NOE_LITTLEENDIAN)
-                    rapi.rpgBindNormalBuffer(decodedNormals, noesis.RPGEODATA_FLOAT, 0x0C)
-                    off += 0x04
-                if mesh.vertFlags & 0x04:
-                    tanData = noesis.deinterleaveBytes(vertBuff, off, 0x04, mesh.stride)
-                    decodedTangents = rapi.decodeTangents32(tanData, 4, -10, -10, -10, -2, NOE_LITTLEENDIAN)
-                    rapi.rpgBindTangentBuffer(decodedTangents, noesis.RPGEODATA_FLOAT, 0x10)
-                    off += 0x04
-                if mesh.vertFlags & 0x08:
-                    rapi.rpgBindUV1BufferOfs(vertBuff, noesis.RPGEODATA_USHORT, mesh.stride, off)
-                    off += 0x04
-                if mesh.vertFlags & 0x10:
-                    rapi.rpgBindUV2BufferOfs(vertBuff, noesis.RPGEODATA_USHORT, mesh.stride, off)
-                    off += 0x04
-                if mesh.vertFlags & 0x20:
-                    rapi.rpgBindUVXBufferOfs(vertBuff, noesis.RPGEODATA_USHORT, mesh.stride, 2, 2, off)
-                    off += 0x04
-                if mesh.vertFlags & 0x40:
-                    rapi.rpgBindUVXBufferOfs(vertBuff, noesis.RPGEODATA_USHORT, mesh.stride, 3, 2, off)
-                    off += 0x04
-                if mesh.vertFlags & 0x80:
-                    if not vc2:
-                        rapi.rpgBindColorBufferOfs(vertBuff, noesis.RPGEODATA_UBYTE, mesh.stride, off, 4)
-                    off += 0x04
-                if mesh.vertFlags & 0x100:
-                    if vc2:
-                        rapi.rpgBindColorBufferOfs(vertBuff, noesis.RPGEODATA_UBYTE, mesh.stride, off, 4)
-                    off += 0x04
-                if mesh.vertFlags & 0x200:
-                    rapi.rpgBindBoneWeightBufferOfs(vertBuff, noesis.RPGEODATA_UBYTE, mesh.stride, off, 4)
-                    off += 0x04
-                elif subMesh.boneMapCount != 0:
-                    weightBuff = struct.pack("B" * subMesh.vertCount, * [0xFF] * subMesh.vertCount)
-                    rapi.rpgBindBoneWeightBuffer(weightBuff, noesis.RPGEODATA_UBYTE, 0x01, 1)
-                if mesh.vertFlags & 0x400:
-                    rapi.rpgBindBoneIndexBufferOfs(vertBuff, noesis.RPGEODATA_UBYTE, mesh.stride, off, 4)
-                elif subMesh.boneMapCount != 0:
-                    indexBuff = struct.pack("B" * subMesh.vertCount, * [0x00] * subMesh.vertCount)
-                    rapi.rpgBindBoneIndexBuffer(indexBuff, noesis.RPGEODATA_UBYTE, 0x01, 1)
-                if mesh.morphCount != 0:
-                    for j in range(mesh.morphCount):
-                        off = 0
-                        vertBuff = bs.readBytes(subMesh.vertCount * mesh.stride)
-                        if mesh.vertFlags & 0x01:
-                            rapi.rpgFeedMorphTargetPositionsOfs(vertBuff, noesis.RPGEODATA_FLOAT, mesh.stride, off)
-                            off += 0x0C
-                        if mesh.vertFlags & 0x02:
-                            nmlData = noesis.deinterleaveBytes(vertBuff, off, 0x04, mesh.stride)
-                            decodedNormals = rapi.decodeNormals32(nmlData, 4, -10, -10, -10, NOE_LITTLEENDIAN)
-                            rapi.rpgFeedMorphTargetNormals(decodedNormals, noesis.RPGEODATA_FLOAT, 0x0C)
-                        rapi.rpgCommitMorphFrame(subMesh.vertCount)
-                    rapi.rpgCommitMorphFrameSet()
-                bs.seek(faceOff + subMesh.faceOff, NOESEEK_ABS)
-                faceBuff = bs.readBytes(subMesh.faceCount * 0x02)
-                rapi.rpgCommitTriangles(faceBuff, noesis.RPGEODATA_USHORT, subMesh.faceCount, noesis.RPGEO_TRIANGLE_STRIP, 1)
+                if not mesh.name.startswith('_merged_MODEL_1_'):
+                    subMesh = subMeshes[mesh.subMeshIdx + i]
+                    if mesh.subMeshCount > 1:
+                        rapi.rpgSetName(mesh.name + "_" + str(cnt))
+                        cnt += 1
+                    else:
+                        rapi.rpgSetName(mesh.name)
+                    rapi.rpgSetMaterial(self.matList[subMesh.matIdx].name)
+                    rapi.rpgSetUVScaleBias(NoeVec3([subMesh.uvScaleU, subMesh.uvScaleV * -1, 1]), NoeVec3([subMesh.uvPosU, 1 - subMesh.uvPosV, 0]))
+                    if subMesh.boneMapCount != 0:
+                        rapi.rpgSetBoneMap(self.boneMapList[mesh.subMeshIdx + i])
+                    bs.seek(vertOff + subMesh.vertOff, NOESEEK_ABS)
+                    vertBuff = bs.readBytes(subMesh.vertCount * mesh.stride)
+                    off = 0
+                    if mesh.vertFlags & 0x01:
+                        rapi.rpgBindPositionBufferOfs(vertBuff, noesis.RPGEODATA_FLOAT, mesh.stride, off)
+                        off += 0x0C
+                    if mesh.vertFlags & 0x02:
+                        nmlData = noesis.deinterleaveBytes(vertBuff, off, 0x04, mesh.stride)
+                        decodedNormals = rapi.decodeNormals32(nmlData, 4, -10, -10, -10, NOE_LITTLEENDIAN)
+                        rapi.rpgBindNormalBuffer(decodedNormals, noesis.RPGEODATA_FLOAT, 0x0C)
+                        off += 0x04
+                    if mesh.vertFlags & 0x04:
+                        tanData = noesis.deinterleaveBytes(vertBuff, off, 0x04, mesh.stride)
+                        decodedTangents = rapi.decodeTangents32(tanData, 4, -10, -10, -10, -2, NOE_LITTLEENDIAN)
+                        rapi.rpgBindTangentBuffer(decodedTangents, noesis.RPGEODATA_FLOAT, 0x10)
+                        off += 0x04
+                    if mesh.vertFlags & 0x08:
+                        rapi.rpgBindUV1BufferOfs(vertBuff, noesis.RPGEODATA_USHORT, mesh.stride, off)
+                        off += 0x04
+                    if mesh.vertFlags & 0x10:
+                        rapi.rpgBindUV2BufferOfs(vertBuff, noesis.RPGEODATA_USHORT, mesh.stride, off)
+                        off += 0x04
+                    if mesh.vertFlags & 0x20:
+                        rapi.rpgBindUVXBufferOfs(vertBuff, noesis.RPGEODATA_USHORT, mesh.stride, 2, 2, off)
+                        off += 0x04
+                    if mesh.vertFlags & 0x40:
+                        rapi.rpgBindUVXBufferOfs(vertBuff, noesis.RPGEODATA_USHORT, mesh.stride, 3, 2, off)
+                        off += 0x04
+                    if mesh.vertFlags & 0x80:
+                        if not vc2:
+                            rapi.rpgBindColorBufferOfs(vertBuff, noesis.RPGEODATA_UBYTE, mesh.stride, off, 4)
+                        off += 0x04
+                    if mesh.vertFlags & 0x100:
+                        if vc2:
+                            rapi.rpgBindColorBufferOfs(vertBuff, noesis.RPGEODATA_UBYTE, mesh.stride, off, 4)
+                        off += 0x04
+                    if mesh.vertFlags & 0x200:
+                        rapi.rpgBindBoneWeightBufferOfs(vertBuff, noesis.RPGEODATA_UBYTE, mesh.stride, off, 4)
+                        off += 0x04
+                    elif subMesh.boneMapCount != 0:
+                        weightBuff = struct.pack("B" * subMesh.vertCount, * [0xFF] * subMesh.vertCount)
+                        rapi.rpgBindBoneWeightBuffer(weightBuff, noesis.RPGEODATA_UBYTE, 0x01, 1)
+                    if mesh.vertFlags & 0x400:
+                        rapi.rpgBindBoneIndexBufferOfs(vertBuff, noesis.RPGEODATA_UBYTE, mesh.stride, off, 4)
+                    elif subMesh.boneMapCount != 0:
+                        indexBuff = struct.pack("B" * subMesh.vertCount, * [0x00] * subMesh.vertCount)
+                        rapi.rpgBindBoneIndexBuffer(indexBuff, noesis.RPGEODATA_UBYTE, 0x01, 1)
+                    if mesh.morphCount != 0:
+                        for j in range(mesh.morphCount):
+                            off = 0
+                            vertBuff = bs.readBytes(subMesh.vertCount * mesh.stride)
+                            if mesh.vertFlags & 0x01:
+                                rapi.rpgFeedMorphTargetPositionsOfs(vertBuff, noesis.RPGEODATA_FLOAT, mesh.stride, off)
+                                off += 0x0C
+                            if mesh.vertFlags & 0x02:
+                                nmlData = noesis.deinterleaveBytes(vertBuff, off, 0x04, mesh.stride)
+                                decodedNormals = rapi.decodeNormals32(nmlData, 4, -10, -10, -10, NOE_LITTLEENDIAN)
+                                rapi.rpgFeedMorphTargetNormals(decodedNormals, noesis.RPGEODATA_FLOAT, 0x0C)
+                            rapi.rpgCommitMorphFrame(subMesh.vertCount)
+                        rapi.rpgCommitMorphFrameSet()
+                    bs.seek(faceOff + subMesh.faceOff, NOESEEK_ABS)
+                    faceBuff = bs.readBytes(subMesh.faceCount * 0x02)
+                    rapi.rpgCommitTriangles(faceBuff, noesis.RPGEODATA_USHORT, subMesh.faceCount, noesis.RPGEO_TRIANGLE_STRIP, 1)
             rapi.rpgClearBufferBinds()
 
 class MeshFgo:
