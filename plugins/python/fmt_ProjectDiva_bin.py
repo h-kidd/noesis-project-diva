@@ -2977,6 +2977,8 @@ class Txp:
             texData = rapi.imageDecodeDXT(texData, width, height, noesis.FOURCC_DXT1)
         elif texFormat == 109:
             texData = rapi.imageDecodeDXT(texData, width, height, noesis.FOURCC_DXT5)
+        elif texFormat == 110:
+            texData = rapi.imageDecodeDXT(texData, width, height, noesis.FOURCC_DXT5)
         elif texFormat == 112:
             texData = rapi.imageDecodeDXT(texData, width, height, noesis.FOURCC_BC4)
         elif texFormat == 115:
