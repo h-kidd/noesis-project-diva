@@ -3202,13 +3202,14 @@ class Ibl:
                     return 0
                 width = int(lightMaps[i][1].split(" ")[0])
                 height = int(lightMaps[i][1].split(" ")[1])
-                texData = bs.readBytes(width * height * 8 * 6)
-                texData = rapi.imageDecodeRaw(texData, width * 6, height * 6, "r#f16g#f16b#f16a#f16")
+                texDat = bs.readBytes(width * height * 8 * 6)
+                texData = rapi.imageDecodeRaw(texDat, width * 6, height * 6, "r#f16g#f16b#f16a#f16")
                 texFmt = noesis.NOESISTEX_RGBA32
                 if len(lightMaps) == 1:
                     tex = NoeTexture(self.fileName, width, height, texData, texFmt)
                 else:
                     tex = NoeTexture(self.fileName + "_" + str(i), width, height, texData, texFmt)
+                tex.setHDRData(texDat, noesis.kNHDRTF_RGBA_F64, 0)
                 tex.setFlags(noesis.NTEXFLAG_CUBEMAP)
                 self.texList.append(tex)
 
